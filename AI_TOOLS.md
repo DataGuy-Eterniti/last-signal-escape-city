@@ -6,6 +6,12 @@ In compliance with the project owner policy, transparent development guidelines,
 - **Sole Project Owner & Human Author**: Adeniji Elijah Adetomiwa (`adenijielijah2003@gmail.com`)
 - **Git Author & Commits**: All commits are made solely under the human owner's identity. No bots, service accounts, or AI identities are listed as Git contributors, authors, or `Co-authored-by` trailer entities.
 
+## Design Attribution
+- **Visual Design System**: Authoritative Gold Noir design system created and provided by human UI/UX design handoff.
+  - Palette: Dark espresso background, `#603E1E` brown, `#F1D8A8` pale gold, `#FFC34D` glowing gold.
+  - Typography: Cormorant Garamond (display) and Inter (sans).
+  - Components: Folded-metal courier vehicle, procedural Gold Noir city blocks with offscreen sprite caching, speed gauge HUD, glass cards, and pure CSS cross-fade / staggered reveal animations.
+
 ## AI Tools Utilized
 
 ### 1. OpenAI ChatGPT

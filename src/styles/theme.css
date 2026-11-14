@@ -1,0 +1,374 @@
+/* ==========================================================================
+   LAST SIGNAL — Gold Noir design system
+   Palette from the "Still Waters" reference: brown #603E1E, pale gold #F1D8A8,
+   glowing gold #FFC34D. Motion language: soft cross-fades and staggered
+   rise-in reveals (cards, rows and labels arrive one after another).
+   Pure CSS — no animation library, GPU-friendly (opacity/transform only).
+   ========================================================================== */
+
+:root {
+  --ink-950: #0d0804;
+  --ink-900: #140c06;
+  --ink-850: #1b1209;
+  --ink-800: #24170b;
+  --ink-700: #33210f;
+  --brown: #603e1e;
+  --brown-soft: #7a5430;
+  --gold-pale: #f1d8a8;
+  --gold: #ffc34d;
+  --gold-deep: #d9952b;
+  --cream: #f6ebd3;
+  --muted: #b59b74;
+  --dim: #7d6748;
+  --copper: #c2622d;
+  --line: rgba(241, 216, 168, 0.14);
+  --line-strong: rgba(241, 216, 168, 0.32);
+  --gold-gradient: linear-gradient(100deg, #b8792a 0%, #ffc34d 30%, #fff3d1 48%, #ffc34d 64%, #a8681f 100%);
+
+  --serif: 'Cormorant Garamond', 'Cormorant', 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  --ease-out: cubic-bezier(0.2, 0.75, 0.2, 1);
+  --ease-soft: cubic-bezier(0.45, 0, 0.2, 1);
+  --radius: 18px;
+  --stagger: 75ms;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  background: var(--ink-950);
+  color: var(--cream);
+  font-family: var(--sans);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+/* ---------- Typography ---------- */
+
+.serif {
+  font-family: var(--serif);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.kicker {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.gold-text {
+  background-image: var(--gold-gradient);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: goldSheen 9s var(--ease-soft) infinite;
+}
+
+.num {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* ---------- Surfaces ---------- */
+
+.glass {
+  background: linear-gradient(160deg, rgba(36, 23, 11, 0.86), rgba(20, 12, 6, 0.9));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 230, 180, 0.06);
+}
+
+.glass-light {
+  background: rgba(27, 18, 9, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.hairline {
+  height: 1px;
+  width: 36px;
+  background: linear-gradient(90deg, var(--gold-pale), transparent);
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 26px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: transform 260ms var(--ease-out), box-shadow 260ms var(--ease-out), background 260ms var(--ease-out),
+    border-color 260ms var(--ease-out), color 260ms var(--ease-out);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-gold {
+  background: linear-gradient(180deg, #ffd479, var(--gold) 55%, var(--gold-deep));
+  color: #2a1808;
+  box-shadow: 0 10px 30px rgba(255, 195, 77, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.btn-gold:hover {
+  box-shadow: 0 14px 40px rgba(255, 195, 77, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--gold-pale);
+  border-color: var(--line-strong);
+}
+
+.btn-ghost:hover {
+  border-color: var(--gold-pale);
+  background: rgba(241, 216, 168, 0.06);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-arrow {
+  transition: transform 260ms var(--ease-out);
+}
+
+.btn:hover .btn-arrow {
+  transform: translateX(4px);
+}
+
+/* ---------- Motion: page transitions (video reference) ---------- */
+
+.page {
+  width: 100%;
+  height: 100%;
+  animation: pageIn 650ms var(--ease-out) both;
+}
+
+.page.leaving {
+  animation: pageOut 320ms var(--ease-soft) both;
+}
+
+/* Staggered rise-in: set style={{ '--i': n }} on each element */
+.reveal {
+  opacity: 0;
+  animation: riseIn 800ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger) + 120ms);
+}
+
+.reveal-fade {
+  opacity: 0;
+  animation: fadeIn 900ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger) + 120ms);
+}
+
+.reveal-scale {
+  opacity: 0;
+  animation: scaleIn 900ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger) + 120ms);
+}
+
+/* Animated letters create their own layers, which breaks background-clip on the
+   parent — so each letter paints the gold gradient itself, sheen included. */
+.gold-text .letters > span {
+  background-image: var(--gold-gradient);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: letterIn 900ms var(--ease-out) both, goldSheen 9s var(--ease-soft) infinite;
+  animation-delay: calc(var(--l, 0) * 45ms + 200ms), 0s;
+}
+
+/* Per-letter headline reveal */
+.letters span {
+  display: inline-block;
+  opacity: 0;
+  animation: letterIn 900ms var(--ease-out) both;
+  animation-delay: calc(var(--l, 0) * 45ms + 200ms);
+}
+
+/* ---------- Ambient light (god rays like the reference) ---------- */
+
+.rays {
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  background:
+    linear-gradient(115deg, transparent 38%, rgba(255, 205, 110, 0.10) 44%, transparent 50%),
+    linear-gradient(118deg, transparent 52%, rgba(255, 215, 140, 0.07) 56%, transparent 61%),
+    linear-gradient(112deg, transparent 27%, rgba(255, 190, 90, 0.06) 31%, transparent 36%);
+  animation: raysDrift 16s ease-in-out infinite alternate;
+  mix-blend-mode: screen;
+}
+
+.glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 195, 77, 0.28), rgba(255, 195, 77, 0) 70%);
+  animation: breathe 7s ease-in-out infinite;
+}
+
+.grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.06;
+  background-image: radial-gradient(rgba(255, 240, 210, 0.9) 0.5px, transparent 0.6px);
+  background-size: 3px 3px;
+}
+
+.sparkle {
+  display: inline-block;
+  animation: twinkle 3.2s ease-in-out infinite;
+}
+
+/* ---------- Status dot ---------- */
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 0 rgba(255, 195, 77, 0.6);
+  animation: pulse 1.8s ease-out infinite;
+}
+
+.dot.ok {
+  background: #e8d38a;
+  animation: none;
+  box-shadow: 0 0 10px rgba(255, 220, 140, 0.8);
+}
+
+.dot.warn {
+  background: var(--copper);
+  box-shadow: 0 0 0 0 rgba(194, 98, 45, 0.6);
+}
+
+/* ---------- Keyframes ---------- */
+
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(10px); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@keyframes pageOut {
+  from { opacity: 1; }
+  to { opacity: 0; transform: translateY(-6px); }
+}
+
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes letterIn {
+  from { opacity: 0; transform: translateY(0.35em); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@keyframes goldSheen {
+  0%, 100% { background-position: 100% 0; }
+  50% { background-position: 0% 0; }
+}
+
+@keyframes raysDrift {
+  from { transform: translateX(-3%) rotate(0deg); opacity: 0.8; }
+  to { transform: translateX(3%) rotate(1.5deg); opacity: 1; }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.35; transform: scale(0.8) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.1) rotate(45deg); }
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 195, 77, 0.55); }
+  100% { box-shadow: 0 0 0 10px rgba(255, 195, 77, 0); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, -14px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ---------- Accessibility ---------- */
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
