@@ -1,18 +1,78 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Smartphone, Keyboard, QrCode, X, ArrowLeft, Flame } from 'lucide-react';
+import { Smartphone, Keyboard, QrCode, X, ArrowLeft, Flame, Navigation, RotateCcw, Map as MapIcon, Shield } from 'lucide-react';
 import { ControllerInput, NetworkPacket, RoomConnectionState, VehicleState } from '../types';
 import { createInitialVehicle, updateVehicle } from '../engine/physics';
-import { renderGame } from '../engine/renderer';
+import { renderGame, prewarm, cityThumbnail } from '../engine/renderer';
+import { buildWorld, collide, damageFrom, districtAt, METERS_PER_PX, World } from '../engine/world';
+import { CityProfile, getCity } from '../engine/cities';
+import { Actors, collideTraffic, createActors, updateActors } from '../engine/actors';
 import { GameHostNetwork } from '../network/webrtc';
 import { generateRoomCode } from '../utils/room';
 import { Letters, SpeedArc } from '../components/Ornaments';
+import { CitySelect, fmtTime, readBest, writeBest } from '../components/CitySelect';
 
 const i = (n: number) => ({ ['--i' as string]: n } as React.CSSProperties);
 const MAX_KMH = 220;
+const STEP = 1 / 120; // fixed physics step — deterministic and tunnel-free at nitro speed
+const EXTRACT_RADIUS = 60;
+
+type Phase = 'select' | 'play' | 'won' | 'lost';
+
+interface Hud {
+  kmh: number;
+  nitro: boolean;
+  source: 'keyboard' | 'phone';
+  integrity: number;
+  time: number;
+  distM: number;
+  bearing: number; // radians, screen space
+  district: string;
+}
+
+/** Minimap: cached city thumbnail + live markers, redrawn only on HUD ticks (~10 Hz). */
+const Minimap: React.FC<{ world: World; x: number; y: number; angle: number }> = ({ world, x, y, angle }) => {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  const SIZE = 168;
+  useEffect(() => {
+    const c = ref.current;
+    const base = cityThumbnail(world, SIZE);
+    if (!c || !base) return;
+    if (c.width !== base.width) {
+      c.width = base.width;
+      c.height = base.height;
+    }
+    const m = c.getContext('2d');
+    if (!m) return;
+    m.drawImage(base, 0, 0);
+    const s = base.width / world.width;
+    m.save();
+    m.translate(x * s, y * s);
+    m.rotate(angle + Math.PI / 2);
+    m.fillStyle = '#fff3d1';
+    m.beginPath();
+    m.moveTo(0, -6);
+    m.lineTo(4.5, 5);
+    m.lineTo(-4.5, 5);
+    m.closePath();
+    m.fill();
+    m.restore();
+  }, [world, x, y, angle]);
+  return <canvas ref={ref} style={{ display: 'block', borderRadius: 8 }} aria-label="Minimap" />;
+};
 
 export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+
+  // City / phase
+  const [city, setCity] = useState<CityProfile | null>(() => getCity(new URLSearchParams(window.location.search).get('city')) ?? null);
+  const [phase, setPhase] = useState<Phase>(() => (city ? 'play' : 'select'));
+  const phaseRef = useRef<Phase>(phase);
+  phaseRef.current = phase;
+  const world = useMemo(() => (city ? buildWorld(city) : null), [city]);
+  const worldRef = useRef<World | null>(world);
+  worldRef.current = world;
 
   // Connection and Room state
   const [roomCode] = useState<string>(() => generateRoomCode());
@@ -23,31 +83,80 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
     packetsReceived: 0,
     lastPacketTime: 0
   });
-  const [showPairingModal, setShowPairingModal] = useState<boolean>(true);
-  const [keyboardActive, setKeyboardActive] = useState<boolean>(false);
+  const [showPairingModal, setShowPairingModal] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [flash, setFlash] = useState(0);
+  const [result, setResult] = useState<{ time: number; best: number | null; newBest: boolean } | null>(null);
 
-  // HUD telemetry sampled from the simulation (~12 Hz, keeps React renders cheap)
-  const [hud, setHud] = useState({ kmh: 0, nitro: false, source: 'keyboard' as 'keyboard' | 'phone' });
+  const [hud, setHud] = useState<Hud>({
+    kmh: 0,
+    nitro: false,
+    source: 'keyboard',
+    integrity: 100,
+    time: 0,
+    distM: 0,
+    bearing: 0,
+    district: ''
+  });
   const inputSourceRef = useRef<'keyboard' | 'phone'>('keyboard');
 
-  // Live game simulation state
+  // Live simulation state
   const vehicleRef = useRef<VehicleState>(createInitialVehicle(1000, 1000));
-  const activeInputRef = useRef<ControllerInput>({
-    steer: 0,
-    throttle: 0,
-    brake: 0,
-    nitro: false,
-    seq: 0,
-    timestamp: Date.now()
-  });
-
-  // Track keyboard state
+  const integrityRef = useRef(100);
+  const elapsedRef = useRef(0);
+  const shakeRef = useRef(0);
+  const activeInputRef = useRef<ControllerInput>({ steer: 0, throttle: 0, brake: 0, nitro: false, seq: 0, timestamp: Date.now() });
   const keysDownRef = useRef<{ [key: string]: boolean }>({});
   const lastPacketTimeRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean>(false);
+  const districtRef = useRef('');
+  const actorsRef = useRef<Actors | null>(null);
+  const lastFireToastRef = useRef(0);
 
-  // 1. Initialize WebRTC Host
+  // Adaptive resolution (keeps 60 FPS on integrated GPUs)
+  const scaleRef = useRef(Math.min(window.devicePixelRatio || 1, 1));
+  const frameAvgRef = useRef(16.7);
+
+  const resetRun = useCallback((w: World) => {
+    const v = createInitialVehicle(w.start.x, w.start.y);
+    v.angle = w.start.angle;
+    vehicleRef.current = v;
+    integrityRef.current = 100;
+    elapsedRef.current = 0;
+    shakeRef.current = 0;
+    districtRef.current = '';
+    actorsRef.current = createActors(w);
+    setResult(null);
+    prewarm(w, w.start.x, w.start.y);
+  }, []);
+
+  useEffect(() => {
+    if (world) resetRun(world);
+  }, [world, resetRun]);
+
+  const pickCity = (c: CityProfile) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('city', c.id);
+    window.history.replaceState({}, '', url.toString());
+    setCity(c);
+    setPhase('play');
+    if (networkState.status !== 'connected') setShowPairingModal(true);
+  };
+
+  const backToSelect = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('city');
+    window.history.replaceState({}, '', url.toString());
+    setPhase('select');
+    setCity(null);
+  };
+
+  const restart = () => {
+    if (world) resetRun(world);
+    setPhase('play');
+  };
+
+  // 1. WebRTC host (starts immediately so the phone can pair during city select)
   useEffect(() => {
     const handleNetworkMessage = (packet: NetworkPacket) => {
       if ('steer' in packet) {
@@ -55,11 +164,9 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
         activeInputRef.current = packet;
       }
     };
-
     const host = new GameHostNetwork(roomCode, handleNetworkMessage, (state) => {
       setNetworkState(state);
       if (state.status === 'connected') {
-        // Automatically hide pairing dialog once phone connects
         setShowPairingModal(false);
         if (!wasConnectedRef.current) setToast('Phone connected');
         wasConnectedRef.current = true;
@@ -68,122 +175,183 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
         setToast('Phone disconnected — keyboard active');
       }
     });
-
     host.init();
-
-    return () => {
-      host.destroy();
-    };
+    return () => host.destroy();
   }, [roomCode]);
 
-  // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 2800);
+    const t = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(t);
   }, [toast]);
 
-  // 2. Keyboard fallback listener
+  // 2. Keyboard
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const down = (e: KeyboardEvent) => {
       keysDownRef.current[e.code] = true;
-      setKeyboardActive(true);
-
-      // Shortcut to toggle pairing modal
-      if (e.code === 'KeyP') {
-        setShowPairingModal((prev) => !prev);
-      }
-      if (e.code === 'Escape') {
-        setShowPairingModal(false);
+      if (e.code === 'KeyP') setShowPairingModal((p) => !p);
+      if (e.code === 'Escape') setShowPairingModal(false);
+      if (e.code === 'KeyR' && phaseRef.current !== 'select' && worldRef.current) {
+        resetRun(worldRef.current);
+        setPhase('play');
       }
     };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
+    const up = (e: KeyboardEvent) => {
       keysDownRef.current[e.code] = false;
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
     };
-  }, []);
+  }, [resetRun]);
 
-  // 3. Game Simulation & Render Loop (unchanged logic)
+  // 3. Fixed-timestep simulation + render loop
   useEffect(() => {
-    let animId: number;
-    let lastTime = performance.now();
+    let animId = 0;
+    let last = performance.now();
+    let acc = 0;
+    let lastScaleCheck = last;
+    const t0 = last;
 
-    const loop = (currentTime: number) => {
-      const dt = Math.min((currentTime - lastTime) / 1000, 0.1); // clamp dt to prevent giant physics jumps
-      lastTime = currentTime;
+    const loop = (now: number) => {
+      animId = requestAnimationFrame(loop);
+      const frameMs = now - last;
+      const dt = Math.min(frameMs / 1000, 0.1);
+      last = now;
+      frameAvgRef.current = frameAvgRef.current * 0.95 + frameMs * 0.05;
+
+      const w = worldRef.current;
+      const canvas = canvasRef.current;
+      if (!w || !canvas || phaseRef.current === 'select') return; // nothing to draw behind the menu
 
       const keys = keysDownRef.current;
       const kbdSteer = (keys['ArrowRight'] || keys['KeyD'] ? 1 : 0) - (keys['ArrowLeft'] || keys['KeyA'] ? 1 : 0);
       const kbdThrottle = keys['ArrowUp'] || keys['KeyW'] ? 1 : 0;
       const kbdBrake = keys['ArrowDown'] || keys['KeyS'] ? 1 : 0;
       const kbdNitro = Boolean(keys['ShiftLeft'] || keys['ShiftRight'] || keys['Space']);
-
       const hasKbdInput = kbdSteer !== 0 || kbdThrottle !== 0 || kbdBrake !== 0 || kbdNitro;
       const phoneInputRecent = Date.now() - lastPacketTimeRef.current < 250;
 
-      // Select active input: prioritize phone if recent, fallback to keyboard
-      let effectiveInput: ControllerInput;
+      let input: ControllerInput;
       if (hasKbdInput || !phoneInputRecent) {
-        effectiveInput = {
-          steer: kbdSteer,
-          throttle: kbdThrottle,
-          brake: kbdBrake,
-          nitro: kbdNitro,
-          seq: 0,
-          timestamp: Date.now()
-        };
+        input = { steer: kbdSteer, throttle: kbdThrottle, brake: kbdBrake, nitro: kbdNitro, seq: 0, timestamp: Date.now() };
         inputSourceRef.current = 'keyboard';
       } else {
-        effectiveInput = activeInputRef.current;
+        input = activeInputRef.current;
         inputSourceRef.current = 'phone';
       }
 
-      // Update vehicle physics
-      vehicleRef.current = updateVehicle(vehicleRef.current, effectiveInput, dt);
+      if (phaseRef.current === 'play') {
+        acc += dt;
+        while (acc >= STEP) {
+          acc -= STEP;
+          const moved = updateVehicle(vehicleRef.current, input, STEP, w.width, w.height);
+          const res = collide(w, moved);
+          const actors = actorsRef.current;
+          const tr = actors ? collideTraffic(actors, res.vehicle) : { vehicle: res.vehicle, impact: 0, hit: null };
+          vehicleRef.current = tr.vehicle;
+          for (const hit of [res, tr]) {
+            const dmg = damageFrom(hit.impact, hit.hit);
+            if (dmg > 0) {
+              integrityRef.current = Math.max(0, integrityRef.current - dmg);
+              shakeRef.current = Math.min(14, shakeRef.current + hit.impact / 40);
+              if (hit.impact > 160) setFlash((f) => f + 1);
+            }
+          }
+        }
+        elapsedRef.current += dt;
 
-      // Render frame to Canvas 2D
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          renderGame(ctx, canvas.width, canvas.height, vehicleRef.current);
+        const v = vehicleRef.current;
+        if (Math.hypot(v.x - w.extraction.x, v.y - w.extraction.y) < EXTRACT_RADIUS) {
+          const time = elapsedRef.current;
+          const prev = readBest(w.city.id);
+          writeBest(w.city.id, time);
+          setResult({ time, best: prev, newBest: prev === null || time < prev });
+          setPhase('won');
+        } else if (integrityRef.current <= 0) {
+          setResult({ time: elapsedRef.current, best: readBest(w.city.id), newBest: false });
+          setPhase('lost');
+        }
+      } else {
+        acc = 0;
+      }
+
+      // living city: traffic always moves; officers only open fire after a 2 s grace period while you drive
+      const actors = actorsRef.current;
+      if (actors) {
+        const ev = updateActors(actors, w, vehicleRef.current, Math.min(dt, 0.05), phaseRef.current === 'play' && elapsedRef.current > 2);
+        if (ev.bulletDamage > 0 && phaseRef.current === 'play') {
+          integrityRef.current = Math.max(0, integrityRef.current - ev.bulletDamage);
+          shakeRef.current = Math.min(14, shakeRef.current + 5);
+          setFlash((f) => f + 1);
+        }
+        if (ev.shotsFired > 0 && now - lastFireToastRef.current > 6000) {
+          lastFireToastRef.current = now;
+          setToast('Under fire — break line of sight');
         }
       }
 
-      animId = requestAnimationFrame(loop);
-    };
+      // adaptive resolution: drop to 0.75× if frames run long, recover when smooth
+      if (now - lastScaleCheck > 2000) {
+        lastScaleCheck = now;
+        const cap = Math.min(window.devicePixelRatio || 1, 1);
+        if (frameAvgRef.current > 19 && scaleRef.current > 0.75) scaleRef.current = Math.max(0.75, scaleRef.current - 0.125);
+        else if (frameAvgRef.current < 14 && scaleRef.current < cap) scaleRef.current = Math.min(cap, scaleRef.current + 0.125);
+      }
+      const cssW = window.innerWidth;
+      const cssH = window.innerHeight;
+      const pw = Math.round(cssW * scaleRef.current);
+      const ph = Math.round(cssH * scaleRef.current);
+      if (canvas.width !== pw || canvas.height !== ph) {
+        canvas.width = pw;
+        canvas.height = ph;
+        ctxRef.current = null;
+      }
+      if (!ctxRef.current) ctxRef.current = canvas.getContext('2d', { alpha: false, desynchronized: true });
+      const ctx = ctxRef.current;
+      if (!ctx) return;
 
+      shakeRef.current *= 0.88;
+      const sh = shakeRef.current;
+      ctx.setTransform(scaleRef.current, 0, 0, scaleRef.current, 0, 0);
+      renderGame(ctx, cssW, cssH, vehicleRef.current, w, {
+        time: (now - t0) / 1000,
+        shakeX: sh > 0.3 ? (Math.random() - 0.5) * sh : 0,
+        shakeY: sh > 0.3 ? (Math.random() - 0.5) * sh : 0,
+        actors: actorsRef.current ?? undefined
+      });
+    };
     animId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animId);
   }, []);
 
-  // HUD sampler
+  // HUD sampler (~10 Hz)
   useEffect(() => {
     const t = window.setInterval(() => {
+      const w = worldRef.current;
+      if (!w) return;
       const v = vehicleRef.current;
-      setHud({ kmh: Math.round(Math.abs(v.speed) * 0.36), nitro: v.nitroActive, source: inputSourceRef.current });
-    }, 80);
-    return () => window.clearInterval(t);
-  }, []);
-
-  // Resize canvas to window dimensions
-  useEffect(() => {
-    const handleResize = () => {
-      if (canvasRef.current) {
-        canvasRef.current.width = window.innerWidth;
-        canvasRef.current.height = window.innerHeight;
+      const dx = w.extraction.x - v.x;
+      const dy = w.extraction.y - v.y;
+      const district = districtAt(w, v.x, v.y);
+      if (phaseRef.current === 'play' && district !== districtRef.current) {
+        if (districtRef.current) setToast(district);
+        districtRef.current = district;
       }
-    };
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+      setHud({
+        kmh: Math.round(Math.abs(v.speed) * 0.36),
+        nitro: v.nitroActive,
+        source: inputSourceRef.current,
+        integrity: Math.round(integrityRef.current),
+        time: elapsedRef.current,
+        distM: Math.hypot(dx, dy) * METERS_PER_PX,
+        bearing: Math.atan2(dy, dx),
+        district
+      });
+    }, 100);
+    return () => window.clearInterval(t);
   }, []);
 
   const controllerUrl = `${window.location.origin}/controller?room=${roomCode}`;
@@ -195,149 +363,201 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
       : networkState.status === 'reconnecting'
         ? 'Re-establishing signal…'
         : `Room ${roomCode} · awaiting phone`;
+  const integrityColor = hud.integrity > 60 ? 'var(--gold)' : hud.integrity > 30 ? '#e9a06a' : '#e0583a';
+  const dist = hud.distM >= 1000 ? `${(hud.distM / 1000).toFixed(1)} km` : `${Math.round(hud.distM)} m`;
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: 'var(--ink-950)' }}>
-      {/* 60 FPS HTML5 Canvas */}
       <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
 
-      {/* Top HUD */}
-      <header
-        style={{
-          position: 'absolute',
-          top: 20,
-          left: 24,
-          right: 24,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          pointerEvents: 'none'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          {onExit && (
-            <button
-              onClick={onExit}
-              className="glass-light reveal-fade"
-              aria-label="Back to menu"
-              style={{ ...i(0), pointerEvents: 'auto', width: 40, height: 40, display: 'grid', placeItems: 'center', cursor: 'pointer', color: 'var(--gold-pale)' }}
-            >
-              <ArrowLeft size={16} />
-            </button>
+      {phase === 'select' && (
+        <CitySelect onPick={pickCity} onBack={onExit} onPair={() => setShowPairingModal(true)} phoneLinked={connected} />
+      )}
+
+      {phase !== 'select' && world && (
+        <>
+          {/* Crash flash */}
+          {flash > 0 && (
+            <div
+              key={flash}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                boxShadow: 'inset 0 0 160px rgba(224, 88, 58, 0.55)',
+                animation: 'pageOut 520ms var(--ease-soft) both'
+              }}
+            />
           )}
-          <div className="reveal" style={i(1)}>
-            <div className="serif gold-text" style={{ fontSize: 26, lineHeight: 1, letterSpacing: '0.06em' }}>
-              LAST SIGNAL
-            </div>
-            <div className="kicker" style={{ fontSize: 9, marginTop: 4 }}>
-              Escape the city
-            </div>
-          </div>
 
-          <div
-            className="glass-light reveal"
-            style={{ ...i(2), display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', marginLeft: 8, pointerEvents: 'auto' }}
+          {/* Top HUD */}
+          <header
+            style={{ position: 'absolute', top: 20, left: 24, right: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', pointerEvents: 'none', gap: 16 }}
           >
-            <span className={`dot ${connected ? 'ok' : networkState.status === 'error' ? 'warn' : ''}`} />
-            <span style={{ fontSize: 12, color: 'var(--gold-pale)', letterSpacing: '0.04em' }} className="num">
-              {statusText}
-            </span>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setShowPairingModal((prev) => !prev)}
-          className="btn btn-ghost reveal"
-          style={{ ...i(3), pointerEvents: 'auto', padding: '10px 18px', background: 'rgba(20,12,6,0.6)' }}
-        >
-          <QrCode size={15} />
-          {showPairingModal ? 'Hide pairing' : connected ? 'Re-pair phone' : 'Pair phone'}
-        </button>
-      </header>
-
-      {/* Speedometer — bottom left */}
-      <div
-        className="glass reveal"
-        style={{ ...i(4), position: 'absolute', bottom: 24, left: 24, padding: '16px 24px 16px 16px', display: 'flex', alignItems: 'center', gap: 14 }}
-      >
-        <div style={{ position: 'relative', width: 112, height: 112 }}>
-          <SpeedArc value={hud.kmh / MAX_KMH} nitro={hud.nitro} size={112} />
-          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
-            <div>
-              <div className="serif num" style={{ fontSize: 38, lineHeight: 1, color: 'var(--cream)' }}>
-                {hud.kmh}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <button
+                onClick={backToSelect}
+                className="glass-light reveal-fade"
+                aria-label="Choose another city"
+                style={{ ...i(0), pointerEvents: 'auto', width: 40, height: 40, display: 'grid', placeItems: 'center', cursor: 'pointer', color: 'var(--gold-pale)' }}
+              >
+                <ArrowLeft size={16} />
+              </button>
+              <div className="reveal" style={i(1)}>
+                <div className="serif gold-text" style={{ fontSize: 26, lineHeight: 1, letterSpacing: '0.06em' }}>
+                  {world.city.name.toUpperCase()}
+                </div>
+                <div className="kicker" style={{ fontSize: 9, marginTop: 4 }}>
+                  {hud.district || world.city.region}
+                </div>
               </div>
-              <div className="kicker" style={{ fontSize: 8, letterSpacing: '0.28em' }}>
-                km/h
+              <div className="glass-light reveal" style={{ ...i(2), display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', pointerEvents: 'auto' }}>
+                <span className={`dot ${connected ? 'ok' : networkState.status === 'error' ? 'warn' : ''}`} />
+                <span style={{ fontSize: 12, color: 'var(--gold-pale)', letterSpacing: '0.04em' }} className="num">
+                  {statusText}
+                </span>
               </div>
             </div>
-          </div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div className="kicker" style={{ fontSize: 9 }}>
-            Driving with
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--gold-pale)', fontSize: 14 }}>
-            {hud.source === 'phone' ? <Smartphone size={15} /> : <Keyboard size={15} />}
-            <span className="serif" style={{ fontSize: 18 }}>
-              {hud.source === 'phone' ? 'Phone' : 'Keyboard'}
-            </span>
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              fontSize: 10,
-              letterSpacing: '0.2em',
-              textTransform: 'uppercase',
-              color: hud.nitro ? 'var(--gold)' : 'var(--dim)',
-              transition: 'color 200ms'
-            }}
-          >
-            <Flame size={12} /> Nitro {hud.nitro ? 'on' : 'ready'}
-          </div>
-        </div>
-      </div>
 
-      {/* Controls hint — bottom right */}
-      <div
-        className="glass reveal"
-        style={{ ...i(5), position: 'absolute', bottom: 24, right: 24, padding: '14px 18px', display: 'grid', gap: 8, fontSize: 11, color: 'var(--muted)' }}
-      >
-        {[
-          ['W A S D', 'Drive'],
-          ['Shift', 'Nitro'],
-          ['P', 'Pairing']
-        ].map(([k, label]) => (
-          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 22 }}>
-            <span style={{ color: keyboardActive ? 'var(--gold-pale)' : 'var(--muted)', letterSpacing: '0.12em' }}>{k}</span>
-            <span className="kicker" style={{ fontSize: 9 }}>
-              {label}
-            </span>
-          </div>
-        ))}
-      </div>
+            {/* Objective */}
+            <div className="glass reveal" style={{ ...i(3), display: 'flex', alignItems: 'center', gap: 14, padding: '10px 18px', borderRadius: 999 }}>
+              <Navigation
+                size={18}
+                color="var(--gold)"
+                style={{ transform: `rotate(${hud.bearing + Math.PI / 4}rad)`, transition: 'transform 120ms linear' }}
+              />
+              <div>
+                <div className="kicker" style={{ fontSize: 8 }}>
+                  Extraction
+                </div>
+                <div className="serif" style={{ fontSize: 17, color: 'var(--cream)', lineHeight: 1.1 }}>
+                  {world.extraction.name}
+                </div>
+              </div>
+              <span className="serif num" style={{ fontSize: 20, color: 'var(--gold)', minWidth: 64, textAlign: 'right' }}>
+                {dist}
+              </span>
+              <span className="kicker num" style={{ fontSize: 10, color: 'var(--gold-pale)', borderLeft: '1px solid var(--line)', paddingLeft: 12 }}>
+                {fmtTime(hud.time)}
+              </span>
+            </div>
 
-      {/* Connection toast */}
+            <button
+              onClick={() => setShowPairingModal((p) => !p)}
+              className="btn btn-ghost reveal"
+              style={{ ...i(4), pointerEvents: 'auto', padding: '10px 18px', background: 'rgba(20,12,6,0.6)' }}
+            >
+              <QrCode size={15} />
+              {connected ? 'Re-pair' : 'Pair phone'}
+            </button>
+          </header>
+
+          {/* Speed + integrity — bottom left */}
+          <div className="glass reveal" style={{ ...i(5), position: 'absolute', bottom: 24, left: 24, padding: '16px 22px 16px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ position: 'relative', width: 112, height: 112 }}>
+              <SpeedArc value={hud.kmh / MAX_KMH} nitro={hud.nitro} size={112} />
+              <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+                <div>
+                  <div className="serif num" style={{ fontSize: 38, lineHeight: 1, color: 'var(--cream)' }}>
+                    {hud.kmh}
+                  </div>
+                  <div className="kicker" style={{ fontSize: 8, letterSpacing: '0.28em' }}>
+                    km/h
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 9, minWidth: 150 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--gold-pale)' }}>
+                {hud.source === 'phone' ? <Smartphone size={14} /> : <Keyboard size={14} />}
+                <span className="serif" style={{ fontSize: 17 }}>
+                  {hud.source === 'phone' ? 'Phone' : 'Keyboard'}
+                </span>
+                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, letterSpacing: '0.2em', textTransform: 'uppercase', color: hud.nitro ? 'var(--gold)' : 'var(--dim)' }}>
+                  <Flame size={11} /> Nitro
+                </span>
+              </div>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                  <span className="kicker" style={{ fontSize: 8, display: 'flex', gap: 5, alignItems: 'center' }}>
+                    <Shield size={10} /> Package
+                  </span>
+                  <span className="num" style={{ fontSize: 11, color: integrityColor }}>
+                    {hud.integrity}%
+                  </span>
+                </div>
+                <div style={{ height: 5, borderRadius: 3, background: 'rgba(241,216,168,0.1)', overflow: 'hidden' }}>
+                  <div style={{ width: `${hud.integrity}%`, height: '100%', background: integrityColor, transition: 'width 200ms, background 300ms' }} />
+                </div>
+              </div>
+              <div className="kicker" style={{ fontSize: 8, color: 'var(--dim)' }}>
+                R restart · P pair
+              </div>
+            </div>
+          </div>
+
+          {/* Minimap — bottom right */}
+          <div className="glass reveal" style={{ ...i(6), position: 'absolute', bottom: 24, right: 24, padding: 10 }}>
+            <div className="kicker" style={{ fontSize: 8, display: 'flex', alignItems: 'center', gap: 6, margin: '0 0 8px 2px' }}>
+              <MapIcon size={10} /> {world.city.name}
+            </div>
+            <Minimap world={world} x={vehicleRef.current.x} y={vehicleRef.current.y} angle={vehicleRef.current.angle} />
+          </div>
+
+          {/* Result overlay */}
+          {(phase === 'won' || phase === 'lost') && result && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'grid',
+                placeItems: 'center',
+                background: 'radial-gradient(80% 80% at 50% 45%, rgba(40,24,10,0.7), rgba(10,6,3,0.92))',
+                zIndex: 80,
+                animation: 'fadeIn 500ms var(--ease-out) both',
+                padding: 20
+              }}
+            >
+              <div className="rays" style={{ opacity: phase === 'won' ? 0.8 : 0.3 }} />
+              <div className="glass reveal-scale" style={{ ...i(0), position: 'relative', padding: '40px 48px', textAlign: 'center', maxWidth: 520 }}>
+                <span className="kicker reveal" style={i(1)}>
+                  {phase === 'won' ? `${world.city.name} · Extraction reached` : `${world.city.name} · Run over`}
+                </span>
+                <h2 className="serif gold-text" style={{ fontSize: 64, fontWeight: 400, lineHeight: 1, margin: '14px 0 10px' }}>
+                  <Letters text={phase === 'won' ? 'Escaped' : 'Package lost'} />
+                </h2>
+                <p className="serif reveal" style={{ ...i(4), fontStyle: 'italic', fontSize: 19, color: 'var(--gold-pale)' }}>
+                  {phase === 'won'
+                    ? `You made ${world.extraction.name} in ${fmtTime(result.time)}.`
+                    : 'Too many crashes — the cargo didn’t survive the city.'}
+                </p>
+                {phase === 'won' && (
+                  <p className="kicker reveal num" style={{ ...i(5), marginTop: 12, color: result.newBest ? 'var(--gold)' : 'var(--muted)' }}>
+                    {result.newBest ? 'New best time' : result.best !== null ? `Best ${fmtTime(result.best)}` : ''}
+                  </p>
+                )}
+                <div className="reveal" style={{ ...i(6), display: 'flex', gap: 12, justifyContent: 'center', marginTop: 28, flexWrap: 'wrap' }}>
+                  <button className="btn btn-gold" onClick={restart}>
+                    <RotateCcw size={15} /> Drive again
+                  </button>
+                  <button className="btn btn-ghost" onClick={backToSelect}>
+                    <MapIcon size={15} /> Choose city
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Toast */}
       {toast && (
         <div
+          key={toast}
           className="glass-light"
-          style={{
-            position: 'absolute',
-            top: 84,
-            left: '50%',
-            padding: '10px 20px',
-            fontSize: 13,
-            color: 'var(--gold-pale)',
-            animation: 'toastIn 500ms var(--ease-out) both',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            zIndex: 50
-          }}
+          style={{ position: 'absolute', top: 88, left: '50%', padding: '10px 20px', fontSize: 13, color: 'var(--gold-pale)', animation: 'toastIn 500ms var(--ease-out) both', display: 'flex', alignItems: 'center', gap: 10, zIndex: 90 }}
         >
-          <span className={`dot ${connected ? 'ok' : 'warn'}`} /> {toast}
+          <span className={`dot ${connected ? 'ok' : ''}`} /> <span className="serif" style={{ fontSize: 16, fontStyle: 'italic' }}>{toast}</span>
         </div>
       )}
 
