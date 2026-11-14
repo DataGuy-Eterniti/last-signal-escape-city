@@ -1,0 +1,11 @@
+{
+  "name": "LAST SIGNAL: Escape the City",
+  "description": "Original browser-based top-down 2D arcade chase game entered in the Base44 x Nitro contest",
+  "visibility": "public",
+  "site": {
+    "installCommand": "npm install",
+    "buildCommand": "npm run build",
+    "serveCommand": "npm run dev",
+    "outputDirectory": "./dist"
+  }
+}

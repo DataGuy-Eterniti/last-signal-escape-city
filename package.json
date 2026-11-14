@@ -1,0 +1,27 @@
+{
+  "name": "last-signal-escape-city",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "lucide-react": "^0.475.0",
+    "peerjs": "^1.5.4",
+    "qrcode.react": "^4.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^6.1.0",
+    "vitest": "^2.1.8"
+  }
+}
