@@ -6,49 +6,19 @@ export type MessageHandler = (data: NetworkPacket) => void;
 export type StateChangeHandler = (state: RoomConnectionState) => void;
 
 /**
- * Robust ICE servers configuration:
- * Combines Google Public STUN, PeerJS Cloud TURN, and Open Relay Public TURN.
- * Traverses local Wi-Fi, mDNS masking, carrier-grade NAT, and symmetric cellular firewalls.
+ * Verified ICE Servers Configuration:
+ * Uses Google Public STUN servers with proven global uptime and sub-second DNS resolution.
+ * Unverified, dead, or rate-limited third-party TURN servers are excluded to prevent ICE candidate gathering delays.
  */
-export const ICE_SERVERS: RTCIceServer[] = [
-  // Google Public STUN
+export const VERIFIED_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
-
-  // PeerJS Official Cloud TURN Servers (Built-in free tier)
-  {
-    urls: [
-      'turn:eu-0.turn.peerjs.com:3478',
-      'turn:us-0.turn.peerjs.com:3478'
-    ],
-    username: 'peerjs',
-    credential: 'peerjsp'
-  },
-
-  // Open Relay Project Public Free STUN/TURN (Global fallback over UDP and TCP port 443)
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
-  }
+  { urls: 'stun:stun2.l.google.com:19302' }
 ];
 
 /**
  * Host Manager for /game route (Laptop)
- * Creates the room on the PeerJS cloud and accepts incoming WebRTC connection from phone.
+ * Creates and registers the room on PeerJS cloud (0.peerjs.com) and accepts incoming connections.
  */
 export class GameHostNetwork {
   private peer: Peer | null = null;
@@ -76,23 +46,22 @@ export class GameHostNetwork {
 
   public init() {
     this.isDestroyed = false;
-    this.updateState({ status: 'connecting', roomId: this.roomCode });
+    this.updateState({ status: 'connecting', roomId: this.roomCode, errorMessage: undefined });
 
     const hostPeerId = derivePeerId(this.roomCode);
-    console.log(`[WebRTC Host] Initializing Peer with ID: ${hostPeerId} for room: ${this.roomCode}`);
+    console.log(`[WebRTC Host] Attempting registration on signaling server with Peer ID: "${hostPeerId}" (Room: ${this.roomCode})`);
 
     this.peer = new Peer(hostPeerId, {
-      debug: 2, // Informative logs
+      debug: 2,
       config: {
-        iceServers: ICE_SERVERS,
-        iceCandidatePoolSize: 2
+        iceServers: VERIFIED_ICE_SERVERS
       }
     });
 
     this.peer.on('open', (id) => {
       if (this.isDestroyed) return;
-      console.log(`[WebRTC Host] Successfully registered with signaling server. Peer ID: ${id}`);
-      this.updateState({ status: 'connecting', roomId: this.roomCode });
+      console.log(`[WebRTC Host] SUCCESS: Host Peer ID "${id}" is live and registered on signaling server.`);
+      this.updateState({ status: 'connecting', roomId: this.roomCode, errorMessage: undefined });
     });
 
     this.peer.on('connection', (conn) => {
@@ -100,9 +69,9 @@ export class GameHostNetwork {
         conn.close();
         return;
       }
-      console.log(`[WebRTC Host] Incoming connection request from phone client: ${conn.peer}`);
+      console.log(`[WebRTC Host] INCOMING connection request from Controller Peer: "${conn.peer}"`);
 
-      // Close previous stale connection if one exists
+      // Close previous stale connection if present
       if (this.connection) {
         try {
           this.connection.close();
@@ -117,24 +86,29 @@ export class GameHostNetwork {
 
     this.peer.on('error', (err: any) => {
       if (this.isDestroyed) return;
-      console.error('[WebRTC Host] Signaling Error:', err?.type, err?.message);
+      console.error(`[WebRTC Host] Peer Error [${err?.type}]:`, err?.message);
 
       if (err?.type === 'unavailable-id') {
         this.updateState({
           status: 'error',
-          errorMessage: `Room code ${this.roomCode} is already registered on the signaling server.`
+          errorMessage: `Room ID "${this.roomCode}" is currently locked by a previous session on the signaling server. Reload to acquire a fresh room.`
+        });
+      } else if (err?.type === 'network' || err?.type === 'server-error') {
+        this.updateState({
+          status: 'error',
+          errorMessage: 'Unable to reach the PeerJS signaling server. Verify internet connection.'
         });
       } else {
         this.updateState({
           status: 'error',
-          errorMessage: err?.message || 'Host signaling error'
+          errorMessage: err?.message || 'Signaling error occurred'
         });
       }
     });
 
     this.peer.on('disconnected', () => {
       if (this.isDestroyed) return;
-      console.warn('[WebRTC Host] Disconnected from signaling server — reconnecting...');
+      console.warn('[WebRTC Host] Disconnected from signaling server. Attempting reconnect...');
       this.updateState({ status: 'reconnecting' });
       try {
         this.peer?.reconnect();
@@ -145,28 +119,28 @@ export class GameHostNetwork {
   }
 
   private setupConnection(conn: DataConnection) {
-    // Monitor ICE connection state transitions on the underlying RTCPeerConnection
     const pc = conn.peerConnection;
     if (pc) {
       pc.oniceconnectionstatechange = () => {
-        console.log(`[WebRTC Host] ICE State: ${pc.iceConnectionState}`);
+        console.log(`[WebRTC Host] ICE Connection State: "${pc.iceConnectionState}"`);
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          console.log('[WebRTC Host] WebRTC ICE handshake completed successfully');
+          console.log('[WebRTC Host] WebRTC direct P2P link established.');
+          this.logActiveCandidatePair(pc);
         } else if (pc.iceConnectionState === 'failed') {
-          console.warn('[WebRTC Host] ICE failed — attempting ICE restart');
+          console.warn('[WebRTC Host] ICE negotiation failed. Attempting ICE restart...');
           if (pc.restartIce) pc.restartIce();
         }
       };
 
       pc.onconnectionstatechange = () => {
-        console.log(`[WebRTC Host] PeerConnection State: ${pc.connectionState}`);
+        console.log(`[WebRTC Host] Connection State: "${pc.connectionState}"`);
       };
     }
 
     conn.on('open', () => {
       if (this.isDestroyed) return;
-      console.log('[WebRTC Host] DataChannel opened with phone controller');
-      this.updateState({ status: 'connected' });
+      console.log(`[WebRTC Host] DataChannel OPENED with phone controller "${conn.peer}".`);
+      this.updateState({ status: 'connected', errorMessage: undefined });
       this.startPingLoop();
     });
 
@@ -186,7 +160,7 @@ export class GameHostNetwork {
     });
 
     conn.on('close', () => {
-      console.log('[WebRTC Host] Controller DataChannel closed');
+      console.log('[WebRTC Host] Controller DataChannel closed.');
       this.stopPingLoop();
       this.connection = null;
       if (!this.isDestroyed) {
@@ -195,11 +169,26 @@ export class GameHostNetwork {
     });
 
     conn.on('error', (err) => {
-      console.error('[WebRTC Host] Connection error:', err);
+      console.error('[WebRTC Host] DataChannel Error:', err);
       if (!this.isDestroyed) {
         this.updateState({ status: 'error', errorMessage: err?.message || 'DataChannel error' });
       }
     });
+  }
+
+  private async logActiveCandidatePair(pc: RTCPeerConnection) {
+    try {
+      const stats = await pc.getStats();
+      stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && (report.state === 'succeeded' || report.nominated)) {
+          const local = stats.get(report.localCandidateId);
+          const remote = stats.get(report.remoteCandidateId);
+          console.log(`[WebRTC Host] Active Candidate Pair: Local=[${local?.candidateType} ${local?.protocol} ${local?.address || local?.ip}:${local?.port}] <--> Remote=[${remote?.candidateType} ${remote?.protocol} ${remote?.address || remote?.ip}:${remote?.port}]`);
+        }
+      });
+    } catch {
+      /* safe ignore */
+    }
   }
 
   private startPingLoop() {
@@ -280,25 +269,20 @@ export class ControllerNetwork {
     this.isDestroyed = false;
     this.updateState({ status: 'connecting', roomId: this.roomCode, errorMessage: undefined });
 
-    console.log(`[WebRTC Controller] Creating client peer to connect to room: ${this.roomCode}`);
+    console.log(`[WebRTC Controller] Initializing client peer to connect to room: "${this.roomCode}"`);
 
-    // Client gets an ephemeral random peer ID from signaling server
     this.peer = new Peer({
-      debug: 2, // Informative logs
+      debug: 2,
       config: {
-        iceServers: ICE_SERVERS,
-        iceCandidatePoolSize: 2
+        iceServers: VERIFIED_ICE_SERVERS
       }
     });
 
     this.peer.on('open', (clientId) => {
       if (this.isDestroyed) return;
-      console.log(`[WebRTC Controller] Registered with signaling server. Client Peer ID: ${clientId}`);
-
       const hostPeerId = derivePeerId(this.roomCode);
-      console.log(`[WebRTC Controller] Initiating DataChannel connection to Host: ${hostPeerId}`);
+      console.log(`[WebRTC Controller] Registered with signaling server (Client ID: "${clientId}"). Connecting to Host ID: "${hostPeerId}"...`);
 
-      // Connect with reliable: true and json serialization to guarantee reliable handshake completion
       const conn = this.peer!.connect(hostPeerId, {
         reliable: true,
         serialization: 'json'
@@ -310,25 +294,30 @@ export class ControllerNetwork {
 
     this.peer.on('error', (err: any) => {
       if (this.isDestroyed) return;
-      console.error('[WebRTC Controller] Peer Error:', err?.type, err?.message);
+      console.error(`[WebRTC Controller] Peer Error [${err?.type}]:`, err?.message);
       this.stopWatchdog();
 
       if (err?.type === 'peer-unavailable') {
         this.updateState({
           status: 'error',
-          errorMessage: `Room ${this.roomCode} not found. Please verify the room code on your laptop screen.`
+          errorMessage: `Room "${this.roomCode}" was not found on the signaling server. Verify the room code on your laptop screen.`
+        });
+      } else if (err?.type === 'network' || err?.type === 'server-error') {
+        this.updateState({
+          status: 'error',
+          errorMessage: 'Unable to reach the PeerJS signaling server. Check your phone internet connection.'
         });
       } else {
         this.updateState({
           status: 'error',
-          errorMessage: err?.message || 'Connection to signaling server failed'
+          errorMessage: err?.message || 'Connection error occurred'
         });
       }
     });
 
     this.peer.on('disconnected', () => {
       if (this.isDestroyed) return;
-      console.warn('[WebRTC Controller] Disconnected from signaling server');
+      console.warn('[WebRTC Controller] Disconnected from signaling server.');
       try {
         this.peer?.reconnect();
       } catch {
@@ -343,31 +332,30 @@ export class ControllerNetwork {
     const pc = conn.peerConnection;
     if (pc) {
       pc.oniceconnectionstatechange = () => {
-        console.log(`[WebRTC Controller] ICE State: ${pc.iceConnectionState}`);
+        console.log(`[WebRTC Controller] ICE Connection State: "${pc.iceConnectionState}"`);
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          console.log('[WebRTC Controller] ICE connection established');
+          console.log('[WebRTC Controller] WebRTC direct P2P link established.');
         } else if (pc.iceConnectionState === 'failed') {
-          console.warn('[WebRTC Controller] ICE connection failed — attempting ICE restart');
+          console.warn('[WebRTC Controller] ICE negotiation failed. Attempting ICE restart...');
           if (pc.restartIce) pc.restartIce();
         }
       };
 
       pc.onconnectionstatechange = () => {
-        console.log(`[WebRTC Controller] PeerConnection State: ${pc.connectionState}`);
+        console.log(`[WebRTC Controller] Connection State: "${pc.connectionState}"`);
       };
     }
 
     conn.on('open', () => {
       if (this.isDestroyed) return;
       this.stopWatchdog();
-      console.log('[WebRTC Controller] Connected to Host game screen! DataChannel is open.');
+      console.log(`[WebRTC Controller] SUCCESS: DataChannel OPENED to host room "${this.roomCode}".`);
       this.updateState({ status: 'connected', errorMessage: undefined });
     });
 
     conn.on('data', (rawData) => {
       const packet = rawData as NetworkPacket;
       if ('type' in packet && packet.type === 'ping') {
-        // Immediately reply with pong for RTT latency measurement
         if (conn.open) {
           conn.send({
             type: 'pong',
@@ -379,7 +367,7 @@ export class ControllerNetwork {
     });
 
     conn.on('close', () => {
-      console.log('[WebRTC Controller] Connection closed');
+      console.log('[WebRTC Controller] DataChannel closed.');
       this.stopWatchdog();
       if (!this.isDestroyed) {
         this.updateState({ status: 'disconnected', pingMs: 0 });
@@ -387,31 +375,31 @@ export class ControllerNetwork {
     });
 
     conn.on('error', (err) => {
-      console.error('[WebRTC Controller] Conn error:', err);
+      console.error('[WebRTC Controller] DataChannel Error:', err);
       this.stopWatchdog();
       if (!this.isDestroyed) {
-        this.updateState({ status: 'error', errorMessage: err?.message || 'Connection error' });
+        this.updateState({ status: 'error', errorMessage: err?.message || 'DataChannel error' });
       }
     });
   }
 
   private startWatchdog(conn: DataConnection) {
     this.stopWatchdog();
-    // 9-second connection watchdog: if ICE negotiation or handshake hangs, report actionable state
+    // 9-second connection watchdog: detects signaling/ICE stalls and provides exact diagnostics
     this.watchdogTimer = window.setTimeout(() => {
       if (!this.isDestroyed && (!conn.open || this.state.status !== 'connected')) {
         const iceState = conn.peerConnection?.iceConnectionState;
-        console.warn(`[WebRTC Controller] Connection timed out after 9s. ICE State: ${iceState}`);
+        console.warn(`[WebRTC Controller] Connection timed out after 9s. ICE State: "${iceState}"`);
 
         if (iceState === 'checking' || iceState === 'failed') {
           this.updateState({
             status: 'error',
-            errorMessage: 'Connecting took too long (NAT/firewall block). Ensure both devices have internet access.'
+            errorMessage: 'Direct peer connection timed out (NAT/firewall block). Both devices must have active internet access.'
           });
         } else {
           this.updateState({
             status: 'error',
-            errorMessage: `Room ${this.roomCode} is not responding. Please check that the laptop game is open.`
+            errorMessage: `Room "${this.roomCode}" did not respond. Check that the laptop game is open and active.`
           });
         }
       }
