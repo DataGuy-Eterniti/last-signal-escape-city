@@ -33,7 +33,7 @@ npm run dev
 
 ### 3. Open Routes
 - **Laptop Game Screen**: Navigate to `http://localhost:5173/game`
-- **Android Phone Controller**: Scan the QR code displayed on the laptop, or navigate to `http://<laptop-local-ip>:5173/controller` on your phone connected to the same Wi-Fi.
+- **Android Phone Controller**: Scan the QR code displayed on the laptop, or open the game's `/controller` page and enter the room code. Any internet connection works (mobile data or any Wi-Fi) — see *Phone pairing* below.
 
 ---
 
@@ -53,3 +53,14 @@ npm run build
 
 See [AI_TOOLS.md](AI_TOOLS.md) for transparent documentation of development tools and human project ownership.
 See `base44/config.jsonc` for Base44 cloud deployment configuration.
+
+
+## Phone pairing
+
+The phone and laptop do **not** need to share Wi-Fi. Pairing goes through the internet:
+
+1. Both devices load the game from the public Base44 URL (HTTPS).
+2. The PeerJS signalling server introduces them; inputs then flow phone → laptop over WebRTC.
+3. If the two networks block a direct link (common with mobile data vs campus Wi-Fi), a TURN relay carries the inputs. Configure a free relay (e.g. Metered) with `VITE_TURN_URLS`, `VITE_TURN_USERNAME`, `VITE_TURN_CREDENTIAL` in `.env.local` (git-ignored) and in the Base44 build environment.
+
+In local development (`npm run dev`), the QR code automatically uses the laptop's current network IP.

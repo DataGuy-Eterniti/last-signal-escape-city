@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getControllerUrl } from '../utils/url';
 
+declare const __LAN_IP__: string;
+
 describe('Controller URL Utility', () => {
   beforeEach(() => {
     // Reset window.location mock
@@ -18,9 +20,10 @@ describe('Controller URL Utility', () => {
     });
   });
 
-  it('substitutes reachable LAN IP when accessed on localhost', () => {
+  it('substitutes the detected LAN IP (never a hard-coded one) when accessed on localhost', () => {
     const url = getControllerUrl('QLNS');
-    expect(url).toBe('http://10.211.24.122:5173/controller?room=QLNS');
+    expect(url).toBe(`http://${__LAN_IP__ || 'localhost'}:5173/controller?room=QLNS`);
+    expect(url).not.toContain('10.211.24.122');
   });
 
   it('preserves production Base44 origin when running on *.base44.app', () => {

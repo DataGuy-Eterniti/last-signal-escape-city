@@ -10,11 +10,29 @@ export type StateChangeHandler = (state: RoomConnectionState) => void;
  * Uses Google Public STUN servers with proven global uptime and sub-second DNS resolution.
  * Unverified, dead, or rate-limited third-party TURN servers are excluded to prevent ICE candidate gathering delays.
  */
-export const VERIFIED_ICE_SERVERS: RTCIceServer[] = [
+const STUN: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' }
 ];
+
+/**
+ * Optional TURN relay (no Wi-Fi needed): when phone and laptop are on different
+ * networks (mobile data vs campus Wi-Fi), a direct link is often blocked and the
+ * relay carries the tiny input packets instead. Set in .env.local / Base44 env:
+ *   VITE_TURN_URLS=turn:global.relay.metered.ca:80,turn:global.relay.metered.ca:443,turns:global.relay.metered.ca:443?transport=tcp
+ *   VITE_TURN_USERNAME=...
+ *   VITE_TURN_CREDENTIAL=...
+ */
+function turnServers(): RTCIceServer[] {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
+  const urls = (env.VITE_TURN_URLS ?? '').split(',').map((u) => u.trim()).filter(Boolean);
+  if (!urls.length || !env.VITE_TURN_USERNAME || !env.VITE_TURN_CREDENTIAL) return [];
+  return [{ urls, username: env.VITE_TURN_USERNAME, credential: env.VITE_TURN_CREDENTIAL }];
+}
+
+export const VERIFIED_ICE_SERVERS: RTCIceServer[] = [...STUN, ...turnServers()];
+export const HAS_TURN = VERIFIED_ICE_SERVERS.length > STUN.length;
 
 /**
  * Host Manager for /game route (Laptop)
@@ -29,6 +47,8 @@ export class GameHostNetwork {
   private pingInterval: number | null = null;
   private pingSeq = 0;
   private isDestroyed = false;
+  private startTimer: number | null = null;
+  private idRetries = 0;
 
   private state: RoomConnectionState = {
     status: 'disconnected',
@@ -47,7 +67,17 @@ export class GameHostNetwork {
   public init() {
     this.isDestroyed = false;
     this.updateState({ status: 'connecting', roomId: this.roomCode, errorMessage: undefined });
+    // Deferred one tick: React StrictMode (dev) mounts, unmounts and re-mounts
+    // instantly. Registering twice with the same ID made the signaling server
+    // reject the second registration ("unavailable-id"), so the room vanished
+    // and the phone got "Couldn't reach that room".
+    this.startTimer = window.setTimeout(() => {
+      this.startTimer = null;
+      if (!this.isDestroyed) this.register();
+    }, 60);
+  }
 
+  private register() {
     const hostPeerId = derivePeerId(this.roomCode);
     console.log(`[WebRTC Host] Attempting registration on signaling server with Peer ID: "${hostPeerId}" (Room: ${this.roomCode})`);
 
@@ -60,7 +90,8 @@ export class GameHostNetwork {
 
     this.peer.on('open', (id) => {
       if (this.isDestroyed) return;
-      console.log(`[WebRTC Host] SUCCESS: Host Peer ID "${id}" is live and registered on signaling server.`);
+      this.idRetries = 0;
+      console.log(`[WebRTC Host] SUCCESS: Host Peer ID "${id}" is live and registered on signaling server. TURN relay: ${HAS_TURN ? 'on' : 'off'}`);
       this.updateState({ status: 'connecting', roomId: this.roomCode, errorMessage: undefined });
     });
 
@@ -88,6 +119,22 @@ export class GameHostNetwork {
       if (this.isDestroyed) return;
       console.error(`[WebRTC Host] Peer Error [${err?.type}]:`, err?.message);
 
+      if (err?.type === 'unavailable-id' && this.idRetries < 6) {
+        // a just-closed session still holds the ID on the server for a moment: retry
+        this.idRetries++;
+        console.warn(`[WebRTC Host] Room ID busy, retrying registration (${this.idRetries}/6)...`);
+        try {
+          this.peer?.destroy();
+        } catch {
+          /* ignore */
+        }
+        this.peer = null;
+        this.startTimer = window.setTimeout(() => {
+          this.startTimer = null;
+          if (!this.isDestroyed) this.register();
+        }, 1500);
+        return;
+      }
       if (err?.type === 'unavailable-id') {
         this.updateState({
           status: 'error',
@@ -124,13 +171,19 @@ export class GameHostNetwork {
       pc.oniceconnectionstatechange = () => {
         console.log(`[WebRTC Host] ICE Connection State: "${pc.iceConnectionState}"`);
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          console.log('[WebRTC Host] WebRTC direct P2P link established.');
+          console.log('[WebRTC Host] WebRTC P2P link established.');
           this.logActiveCandidatePair(pc);
         } else if (pc.iceConnectionState === 'failed') {
           console.warn('[WebRTC Host] ICE negotiation failed. Attempting ICE restart...');
           if (pc.restartIce) pc.restartIce();
         }
       };
+
+      pc.addEventListener('icecandidate', (e) => {
+        if (e.candidate) {
+          console.log(`[WebRTC Host] Gathered ICE candidate: type=${e.candidate.type}, protocol=${e.candidate.protocol}${e.candidate.type === 'relay' ? ' [TURN RELAY ACTIVE]' : ''}`);
+        }
+      });
 
       pc.onconnectionstatechange = () => {
         console.log(`[WebRTC Host] Connection State: "${pc.connectionState}"`);
@@ -183,7 +236,8 @@ export class GameHostNetwork {
         if (report.type === 'candidate-pair' && (report.state === 'succeeded' || report.nominated)) {
           const local = stats.get(report.localCandidateId);
           const remote = stats.get(report.remoteCandidateId);
-          console.log(`[WebRTC Host] Active Candidate Pair: Local=[${local?.candidateType} ${local?.protocol} ${local?.address || local?.ip}:${local?.port}] <--> Remote=[${remote?.candidateType} ${remote?.protocol} ${remote?.address || remote?.ip}:${remote?.port}]`);
+          const isRelay = local?.candidateType === 'relay' || remote?.candidateType === 'relay';
+          console.log(`[WebRTC Host] Active Candidate Pair: Local=[${local?.candidateType} ${local?.protocol}] <--> Remote=[${remote?.candidateType} ${remote?.protocol}] (TURN Relay in use: ${isRelay ? 'YES' : 'NO (direct)'})`);
         }
       });
     } catch {
@@ -219,6 +273,10 @@ export class GameHostNetwork {
 
   public destroy() {
     this.isDestroyed = true;
+    if (this.startTimer !== null) {
+      clearTimeout(this.startTimer);
+      this.startTimer = null;
+    }
     this.stopPingLoop();
     if (this.connection) {
       try {
@@ -251,6 +309,7 @@ export class ControllerNetwork {
   private roomCode: string;
   private watchdogTimer: number | null = null;
   private isDestroyed = false;
+  private attempts = 0;
 
   private state: RoomConnectionState = {
     status: 'disconnected',
@@ -297,6 +356,18 @@ export class ControllerNetwork {
       console.error(`[WebRTC Controller] Peer Error [${err?.type}]:`, err?.message);
       this.stopWatchdog();
 
+      if (err?.type === 'peer-unavailable' && this.attempts < 3) {
+        // the laptop may still be (re)registering the room — try again shortly
+        this.attempts++;
+        console.warn(`[WebRTC Controller] Room not found yet, retry ${this.attempts}/3...`);
+        window.setTimeout(() => {
+          if (this.isDestroyed || !this.peer || this.peer.destroyed) return;
+          const conn = this.peer.connect(derivePeerId(this.roomCode), { reliable: true, serialization: 'json' });
+          this.setupConnection(conn);
+          this.startWatchdog(conn);
+        }, 2000);
+        return;
+      }
       if (err?.type === 'peer-unavailable') {
         this.updateState({
           status: 'error',
@@ -334,12 +405,19 @@ export class ControllerNetwork {
       pc.oniceconnectionstatechange = () => {
         console.log(`[WebRTC Controller] ICE Connection State: "${pc.iceConnectionState}"`);
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          console.log('[WebRTC Controller] WebRTC direct P2P link established.');
+          console.log('[WebRTC Controller] WebRTC P2P link established.');
+          this.logActiveCandidatePair(pc);
         } else if (pc.iceConnectionState === 'failed') {
           console.warn('[WebRTC Controller] ICE negotiation failed. Attempting ICE restart...');
           if (pc.restartIce) pc.restartIce();
         }
       };
+
+      pc.addEventListener('icecandidate', (e) => {
+        if (e.candidate) {
+          console.log(`[WebRTC Controller] Gathered ICE candidate: type=${e.candidate.type}, protocol=${e.candidate.protocol}${e.candidate.type === 'relay' ? ' [TURN RELAY ACTIVE]' : ''}`);
+        }
+      });
 
       pc.onconnectionstatechange = () => {
         console.log(`[WebRTC Controller] Connection State: "${pc.connectionState}"`);
@@ -394,7 +472,9 @@ export class ControllerNetwork {
         if (iceState === 'checking' || iceState === 'failed') {
           this.updateState({
             status: 'error',
-            errorMessage: 'Direct peer connection timed out (NAT/firewall block). Both devices must have active internet access.'
+            errorMessage: HAS_TURN
+              ? 'Connection timed out. Check that both devices have internet access and try again.'
+              : 'Your network blocked the direct link (no relay configured). Add the free TURN relay — see README "Phone pairing".'
           });
         } else {
           this.updateState({
@@ -410,6 +490,22 @@ export class ControllerNetwork {
     if (this.watchdogTimer !== null) {
       clearTimeout(this.watchdogTimer);
       this.watchdogTimer = null;
+    }
+  }
+
+  private async logActiveCandidatePair(pc: RTCPeerConnection) {
+    try {
+      const stats = await pc.getStats();
+      stats.forEach((report) => {
+        if (report.type === 'candidate-pair' && (report.state === 'succeeded' || report.nominated)) {
+          const local = stats.get(report.localCandidateId);
+          const remote = stats.get(report.remoteCandidateId);
+          const isRelay = local?.candidateType === 'relay' || remote?.candidateType === 'relay';
+          console.log(`[WebRTC Controller] Active Candidate Pair: Local=[${local?.candidateType} ${local?.protocol}] <--> Remote=[${remote?.candidateType} ${remote?.protocol}] (TURN Relay in use: ${isRelay ? 'YES' : 'NO (direct)'})`);
+        }
+      });
+    } catch {
+      /* safe ignore */
     }
   }
 

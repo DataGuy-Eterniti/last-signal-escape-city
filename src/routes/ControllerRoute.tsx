@@ -239,7 +239,7 @@ export const ControllerRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) =
 
             {networkState.status === 'error' && (
               <p style={{ marginTop: 14, fontSize: 12, color: '#e9a06a', lineHeight: 1.5 }}>
-                Couldn’t reach that room. Check the code and that both devices share the same Wi-Fi.
+                {networkState.errorMessage ?? 'Couldn’t reach that room. Check the code on the laptop and try again.'}
               </p>
             )}
           </div>

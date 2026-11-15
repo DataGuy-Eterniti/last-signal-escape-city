@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+declare const __LAN_IP__: string;
 
 /**
  * URL and Origin Resolution Utility for LAST SIGNAL
@@ -26,12 +27,11 @@ export function getControllerUrl(roomCode: string): string {
     else if ((import.meta as any)?.env?.VITE_CONTROLLER_ORIGIN) {
       baseOrigin = String((import.meta as any).env.VITE_CONTROLLER_ORIGIN).trim();
     }
-    // 3. If running locally on localhost/127.0.0.1, substitute the reachable LAN IP
-    else if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') {
-      // In local testing on the owner's Dell Latitude hotspot/LAN:
-      const defaultLanIp = '10.211.24.122';
+    // 3. Local dev on localhost: use the laptop's real LAN/hotspot IP, detected by
+    //    vite.config.ts at startup (it changes per network, so it is never hard-coded)
+    else if ((loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') && typeof __LAN_IP__ === 'string' && __LAN_IP__) {
       const port = loc.port ? `:${loc.port}` : '';
-      baseOrigin = `${loc.protocol}//${defaultLanIp}${port}`;
+      baseOrigin = `${loc.protocol}//${__LAN_IP__}${port}`;
     }
     // 4. Production or accessed via LAN/WAN IP / Base44 domain (*.base44.app)
     else {
