@@ -11,6 +11,7 @@ import { GameHostNetwork } from '../network/webrtc';
 import { generateRoomCode } from '../utils/room';
 import { Letters, SpeedArc } from '../components/Ornaments';
 import { CitySelect, fmtTime, readBest, writeBest } from '../components/CitySelect';
+import { getControllerUrl } from '../utils/url';
 
 const i = (n: number) => ({ ['--i' as string]: n } as React.CSSProperties);
 const MAX_KMH = 220;
@@ -354,7 +355,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
     return () => window.clearInterval(t);
   }, []);
 
-  const controllerUrl = `${window.location.origin}/controller?room=${roomCode}`;
+  const controllerUrl = getControllerUrl(roomCode);
   const connected = networkState.status === 'connected';
   const statusText = connected
     ? `Phone linked · ${networkState.pingMs} ms`
@@ -616,7 +617,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
 
               <ol style={{ listStyle: 'none', margin: '24px 0 26px', display: 'grid', gap: 12 }}>
                 {[
-                  'Join the same Wi-Fi as this laptop',
+                  'Open the signal on your phone or scan the code',
                   'Scan the code with your phone camera',
                   'Turn your phone sideways and drive'
                 ].map((t, idx) => (
