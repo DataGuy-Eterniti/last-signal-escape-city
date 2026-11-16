@@ -439,8 +439,11 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
 
   const controllerUrl = getControllerUrl(roomCode);
   const connected = networkState.status === 'connected';
+  const rttDisplay = networkState.rttMetrics && networkState.rttMetrics.samplesCount >= 3
+    ? `${networkState.pingMs} ms (med: ${networkState.rttMetrics.median} ms · p95: ${networkState.rttMetrics.p95} ms)`
+    : `${networkState.pingMs} ms`;
   const statusText = connected
-    ? `Phone linked · ${networkState.pingMs} ms`
+    ? `Phone linked · ${rttDisplay}`
     : networkState.status === 'error'
       ? 'Signal error — reload to retry'
       : networkState.status === 'reconnecting'
