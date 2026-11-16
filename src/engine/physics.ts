@@ -10,9 +10,9 @@ export function createInitialVehicle(x: number, y: number): VehicleState {
     speed: 0,
     maxSpeed: 380,       // pixels per second
     accel: 280,          // acceleration in px/s^2
-    brakeForce: 420,     // braking in px/s^2
-    friction: 90,        // ground drag in px/s^2
-    turnSpeed: 3.2,      // radians per second at full steer
+    brakeForce: 450,     // braking in px/s^2
+    friction: 95,        // ground drag in px/s^2
+    turnSpeed: 2.8,      // balanced turning rate (rad/s)
     isBraking: false,
     nitroActive: false
   };
@@ -71,11 +71,47 @@ export function updateVehicle(
     }
   }
 
-  // Steering: turning authority scales with speed (can't pivot in place like a tank)
-  const speedRatio = Math.min(1, Math.abs(next.speed) / (next.maxSpeed * 0.25));
-  if (Math.abs(next.speed) > 1) {
+  // Steering: speed-sensitive authority + cornering scrub + caster road-alignment
+  const absSpeed = Math.abs(next.speed);
+  if (absSpeed > 2) {
+    // Cornering scrub: hard steering naturally bleeds speed for controlled cornering
+    if (Math.abs(steer) > 0.25 && next.speed > 80) {
+      const scrub = Math.min(next.speed - 80, (Math.abs(steer) - 0.25) * 110 * dt);
+      next.speed -= scrub;
+    }
+
+    // Speed-sensitive steering authority:
+    // - Low speed (<80 px/s): 0.70..1.0 authority for nimble maneuvering and parking
+    // - Mid speed (80..200 px/s): 1.0 peak authority for sharp, controlled 90° intersection turns
+    // - High speed (200..380 px/s): gently tapered (down to 0.72) to prevent oversteer while keeping turn authority
+    let speedRatio: number;
+    if (absSpeed < 80) {
+      speedRatio = 0.70 + 0.30 * (absSpeed / 80);
+    } else if (absSpeed <= 200) {
+      speedRatio = 1.0;
+    } else {
+      const highSpeedFactor = (absSpeed - 200) / (effectiveMaxSpeed - 200);
+      speedRatio = Math.max(0.72, 1.0 - 0.28 * Math.min(1, highSpeedFactor));
+    }
+
     const direction = next.speed >= 0 ? 1 : -1;
     next.angle += steer * next.turnSpeed * speedRatio * direction * dt;
+
+    // Caster Self-Centering / Road Alignment:
+    // When the driver centers steering (|steer| < 0.10) and is moving forward,
+    // gently stabilize heading parallel to the nearest cardinal road axis (0, ±π/2, ±π).
+    // This allows rock-solid straight driving down avenues and crisp 90° corner exits.
+    if (Math.abs(steer) < 0.10 && next.speed > 25) {
+      const nearestCardinal = Math.round(next.angle / (Math.PI / 2)) * (Math.PI / 2);
+      let dev = next.angle - nearestCardinal;
+      while (dev > Math.PI) dev -= 2 * Math.PI;
+      while (dev < -Math.PI) dev += 2 * Math.PI;
+
+      if (Math.abs(dev) < 0.38) {
+        const centerStrength = (1 - Math.abs(steer) / 0.10) * Math.min(1, next.speed / 100);
+        next.angle -= dev * Math.min(1, 5.0 * dt) * centerStrength;
+      }
+    }
   }
 
   // Velocity components from angle and forward speed

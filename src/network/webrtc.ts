@@ -1,6 +1,7 @@
 import { Peer, DataConnection } from 'peerjs';
 import { ControllerInput, NetworkPacket, RoomConnectionState } from '../types';
 import { derivePeerId } from '../utils/room';
+import { RttCollector } from './rtt';
 
 export type MessageHandler = (data: NetworkPacket) => void;
 export type StateChangeHandler = (state: RoomConnectionState) => void;
@@ -49,6 +50,7 @@ export class GameHostNetwork {
   private isDestroyed = false;
   private startTimer: number | null = null;
   private idRetries = 0;
+  private rttCollector = new RttCollector(60);
 
   private state: RoomConnectionState = {
     status: 'disconnected',
@@ -205,7 +207,8 @@ export class GameHostNetwork {
       // Handle pong from phone
       if ('type' in packet && packet.type === 'pong') {
         const rtt = Math.max(1, Date.now() - packet.timestamp);
-        this.updateState({ pingMs: rtt });
+        const metrics = this.rttCollector.record(rtt);
+        this.updateState({ pingMs: rtt, rttMetrics: metrics });
         return;
       }
 
@@ -215,6 +218,7 @@ export class GameHostNetwork {
     conn.on('close', () => {
       console.log('[WebRTC Host] Controller DataChannel closed.');
       this.stopPingLoop();
+    this.rttCollector.reset();
       this.connection = null;
       if (!this.isDestroyed) {
         this.updateState({ status: 'connecting', pingMs: 0 });
@@ -247,6 +251,7 @@ export class GameHostNetwork {
 
   private startPingLoop() {
     this.stopPingLoop();
+    this.rttCollector.reset();
     this.pingInterval = window.setInterval(() => {
       if (this.connection && this.connection.open) {
         this.pingSeq++;
@@ -278,6 +283,7 @@ export class GameHostNetwork {
       this.startTimer = null;
     }
     this.stopPingLoop();
+    this.rttCollector.reset();
     if (this.connection) {
       try {
         this.connection.close();
@@ -509,14 +515,23 @@ export class ControllerNetwork {
     }
   }
 
-  public sendInput(input: ControllerInput) {
+  public sendInput(input: ControllerInput): boolean {
     if (this.connection && this.connection.open) {
       try {
+        const dc = (this.connection as any).dataChannel as RTCDataChannel | undefined;
+        // Congestion guard: If SCTP send queue has backlog (> 1024 bytes), drop intermediate
+        // frame to prevent bufferbloat and guarantee latest-input-wins responsiveness over mobile networks
+        if (dc && typeof dc.bufferedAmount === 'number' && dc.bufferedAmount > 1024) {
+          return false;
+        }
         this.connection.send(input);
+        return true;
       } catch (err) {
         console.error('[WebRTC Controller] Error sending input:', err);
+        return false;
       }
     }
+    return false;
   }
 
   private updateState(partial: Partial<RoomConnectionState>) {

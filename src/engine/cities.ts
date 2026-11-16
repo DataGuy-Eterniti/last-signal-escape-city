@@ -46,7 +46,7 @@ export interface CityProfile {
   districts: District[];
   landmarks: Landmark[];
   water: WaterEdge[];
-  start: { ix: number; iy: number; label: string };
+  start: { ix: number; iy: number; label: string; heading?: number };
   extraction: { ix: number; iy: number; name: string };
   checkpoints: number; // police barricades closing road segments
   parkedCarDensity: number; // 0..1
@@ -85,7 +85,7 @@ export const CITIES: CityProfile[] = [
       { name: 'Madison Square Garden', kind: 'arena', bx: 4, by: 10 }
     ],
     water: [{ edge: 'west', name: 'Hudson River' }],
-    start: { ix: 8, iy: 1, label: 'Madison Ave & W 57th St' },
+    start: { ix: 8, iy: 1, label: 'Madison Ave & W 57th St', heading: Math.PI / 2 },
     extraction: { ix: 0, iy: 8, name: 'Lincoln Tunnel' },
     checkpoints: 12,
     parkedCarDensity: 0.55,
@@ -118,7 +118,7 @@ export const CITIES: CityProfile[] = [
       { edge: 'south', name: 'Lagos Lagoon' },
       { edge: 'west', name: 'Lagos Lagoon' }
     ],
-    start: { ix: 7, iy: 7, label: 'Kingsway Rd & Adeola Odeku St' },
+    start: { ix: 7, iy: 7, label: 'Kingsway Rd & Adeola Odeku St', heading: -Math.PI / 2 },
     extraction: { ix: 0, iy: 0, name: 'Third Mainland Bridge' },
     checkpoints: 9,
     parkedCarDensity: 0.7,
@@ -150,7 +150,7 @@ export const CITIES: CityProfile[] = [
       { edge: 'north', name: 'Chicago River' },
       { edge: 'east', name: 'Lake Michigan' }
     ],
-    start: { ix: 0, iy: 7, label: 'Canal St & Van Buren St' },
+    start: { ix: 0, iy: 7, label: 'Canal St & Van Buren St', heading: -Math.PI / 2 },
     extraction: { ix: 8, iy: 2, name: 'Lake Shore Drive' },
     checkpoints: 8,
     parkedCarDensity: 0.5,
@@ -177,10 +177,10 @@ export const CITIES: CityProfile[] = [
       { name: 'Lantern Square', kind: 'plaza', bx: 4, by: 5 }
     ],
     water: [{ edge: 'south', name: 'Amber Bay' }],
-    start: { ix: 3, iy: 3, label: 'Amber St & Market St' },
+    start: { ix: 3, iy: 3, label: 'Amber St & Market St', heading: Math.PI / 2 },
     extraction: { ix: 7, iy: 7, name: 'Harbor Gate' },
-    checkpoints: 5,
-    parkedCarDensity: 0.35,
+    checkpoints: 2,
+    parkedCarDensity: 0.15,
     seed: 77
   }
 ];

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Smartphone, Keyboard, QrCode, X, ArrowLeft, Flame, Navigation, RotateCcw, Map as MapIcon, Shield } from 'lucide-react';
+import { Smartphone, Keyboard, QrCode, X, ArrowLeft, Flame, Navigation, Map as MapIcon, Shield } from 'lucide-react';
 import { ControllerInput, NetworkPacket, RoomConnectionState, VehicleState } from '../types';
 import { createInitialVehicle, updateVehicle } from '../engine/physics';
 import { renderGame, prewarm, cityThumbnail } from '../engine/renderer';
@@ -8,17 +8,28 @@ import { buildWorld, collide, damageFrom, districtAt, METERS_PER_PX, World } fro
 import { CityProfile, getCity } from '../engine/cities';
 import { Actors, collideTraffic, createActors, updateActors } from '../engine/actors';
 import { GameHostNetwork } from '../network/webrtc';
+import { InputReceiver } from '../network/inputReceiver';
 import { generateRoomCode } from '../utils/room';
 import { Letters, SpeedArc } from '../components/Ornaments';
 import { CitySelect, fmtTime, readBest, writeBest } from '../components/CitySelect';
 import { getControllerUrl } from '../utils/url';
+import { MissionSelect } from '../components/MissionSelect';
+import { CrimeHud } from '../components/hud/CrimeHud';
+import { Meter } from '../components/hud/HudKit';
+import { IconCargo, IconWrench } from '../components/hud/Icons';
+import { MissionResult, Outcome, ResultStat } from '../components/hud/MissionResult';
+import { Mission, getMission } from '../ui/missions';
+import { CrimeHudState, HeatEvent, PURSUIT_AT, dangerMarkers, nextTurn, routePolyline } from '../ui/hudModel';
+import { Camera, createCamera, updateCamera } from '../engine/camera';
+import { CrimeRun, createCrimeRun, crimeStep } from '../ui/crimeDirector';
+import { HEAT_LABELS } from '../components/hud/CrimeHud';
 
 const i = (n: number) => ({ ['--i' as string]: n } as React.CSSProperties);
 const MAX_KMH = 220;
 const STEP = 1 / 120; // fixed physics step — deterministic and tunnel-free at nitro speed
 const EXTRACT_RADIUS = 60;
 
-type Phase = 'select' | 'play' | 'won' | 'lost';
+type Phase = 'select' | 'mission' | 'play' | 'won' | 'lost';
 
 interface Hud {
   kmh: number;
@@ -68,7 +79,13 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
 
   // City / phase
   const [city, setCity] = useState<CityProfile | null>(() => getCity(new URLSearchParams(window.location.search).get('city')) ?? null);
-  const [phase, setPhase] = useState<Phase>(() => (city ? 'play' : 'select'));
+  const [mission, setMission] = useState<Mission | null>(() => {
+    const m = getMission(new URLSearchParams(window.location.search).get('mission'));
+    return m?.available ? m : null;
+  });
+  const missionRef = useRef<Mission | null>(mission);
+  missionRef.current = mission;
+  const [phase, setPhase] = useState<Phase>(() => (city ? (mission ? 'play' : 'mission') : 'select'));
   const phaseRef = useRef<Phase>(phase);
   phaseRef.current = phase;
   const world = useMemo(() => (city ? buildWorld(city) : null), [city]);
@@ -87,7 +104,9 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
   const [showPairingModal, setShowPairingModal] = useState<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
   const [flash, setFlash] = useState(0);
-  const [result, setResult] = useState<{ time: number; best: number | null; newBest: boolean } | null>(null);
+  const [result, setResult] = useState<{ time: number; best: number | null; newBest: boolean; outcome: Outcome; stats: ResultStat[] } | null>(null);
+  const [crimeHud, setCrimeHud] = useState<CrimeHudState | null>(null);
+  const crimeRef = useRef<CrimeRun | null>(null);
 
   const [hud, setHud] = useState<Hud>({
     kmh: 0,
@@ -109,10 +128,16 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
   const activeInputRef = useRef<ControllerInput>({ steer: 0, throttle: 0, brake: 0, nitro: false, seq: 0, timestamp: Date.now() });
   const keysDownRef = useRef<{ [key: string]: boolean }>({});
   const lastPacketTimeRef = useRef<number>(0);
+  // latest-input-wins: drops stale / out-of-order phone packets, falls back to neutral after 250 ms
+  const receiverRef = useRef(new InputReceiver());
   const wasConnectedRef = useRef<boolean>(false);
   const districtRef = useRef('');
   const actorsRef = useRef<Actors | null>(null);
+  const cameraRef = useRef<Camera | null>(null);
+  const routeRef = useRef<{ x: number; y: number }[]>([]);
+  const guidanceRef = useRef(true); // G toggles the route ribbon
   const lastFireToastRef = useRef(0);
+  const lastDamageTimeRef = useRef(0);
 
   // Adaptive resolution (keeps 60 FPS on integrated GPUs)
   const scaleRef = useRef(Math.min(window.devicePixelRatio || 1, 1));
@@ -123,30 +148,53 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
     v.angle = w.start.angle;
     vehicleRef.current = v;
     integrityRef.current = 100;
+    lastDamageTimeRef.current = 0;
     elapsedRef.current = 0;
     shakeRef.current = 0;
     districtRef.current = '';
     actorsRef.current = createActors(w);
+    cameraRef.current = createCamera(v);
+    routeRef.current = routePolyline(w, v.x, v.y, v.angle);
+    crimeRef.current = missionRef.current?.id === 'crime' ? createCrimeRun(actorsRef.current, w) : null;
+    setCrimeHud(null);
     setResult(null);
     prewarm(w, w.start.x, w.start.y);
   }, []);
 
   useEffect(() => {
     if (world) resetRun(world);
-  }, [world, resetRun]);
+  }, [world, mission, resetRun]);
 
   const pickCity = (c: CityProfile) => {
     const url = new URL(window.location.href);
     url.searchParams.set('city', c.id);
     window.history.replaceState({}, '', url.toString());
     setCity(c);
+    setPhase('mission');
+  };
+
+  const pickMission = (m: Mission) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('mission', m.id);
+    window.history.replaceState({}, '', url.toString());
+    setMission(m);
+    missionRef.current = m;
+    if (world) resetRun(world);
     setPhase('play');
     if (networkState.status !== 'connected') setShowPairingModal(true);
+  };
+
+  const backToMission = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('mission');
+    window.history.replaceState({}, '', url.toString());
+    setPhase('mission');
   };
 
   const backToSelect = () => {
     const url = new URL(window.location.href);
     url.searchParams.delete('city');
+    url.searchParams.delete('mission');
     window.history.replaceState({}, '', url.toString());
     setPhase('select');
     setCity(null);
@@ -161,18 +209,24 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
   useEffect(() => {
     const handleNetworkMessage = (packet: NetworkPacket) => {
       if ('steer' in packet) {
-        lastPacketTimeRef.current = Date.now();
-        activeInputRef.current = packet;
+        if (receiverRef.current.receive(packet)) {
+          lastPacketTimeRef.current = Date.now();
+          activeInputRef.current = receiverRef.current.getActiveInput();
+        }
       }
     };
     const host = new GameHostNetwork(roomCode, handleNetworkMessage, (state) => {
       setNetworkState(state);
       if (state.status === 'connected') {
         setShowPairingModal(false);
-        if (!wasConnectedRef.current) setToast('Phone connected');
+        if (!wasConnectedRef.current) {
+          receiverRef.current.reset(); // a reloaded phone restarts its sequence at 1
+          setToast('Phone connected');
+        }
         wasConnectedRef.current = true;
       } else if (wasConnectedRef.current && state.status !== 'reconnecting') {
         wasConnectedRef.current = false;
+        receiverRef.current.reset();
         setToast('Phone disconnected — keyboard active');
       }
     });
@@ -191,8 +245,12 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
     const down = (e: KeyboardEvent) => {
       keysDownRef.current[e.code] = true;
       if (e.code === 'KeyP') setShowPairingModal((p) => !p);
+      if (e.code === 'KeyG') {
+        guidanceRef.current = !guidanceRef.current;
+        setToast(guidanceRef.current ? 'Route guidance on' : 'Route guidance off');
+      }
       if (e.code === 'Escape') setShowPairingModal(false);
-      if (e.code === 'KeyR' && phaseRef.current !== 'select' && worldRef.current) {
+      if (e.code === 'KeyR' && (phaseRef.current === 'play' || phaseRef.current === 'won' || phaseRef.current === 'lost') && worldRef.current) {
         resetRun(worldRef.current);
         setPhase('play');
       }
@@ -225,7 +283,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
 
       const w = worldRef.current;
       const canvas = canvasRef.current;
-      if (!w || !canvas || phaseRef.current === 'select') return; // nothing to draw behind the menu
+      if (!w || !canvas || phaseRef.current === 'select' || phaseRef.current === 'mission') return; // nothing to draw behind the menus
 
       const keys = keysDownRef.current;
       const kbdSteer = (keys['ArrowRight'] || keys['KeyD'] ? 1 : 0) - (keys['ArrowLeft'] || keys['KeyA'] ? 1 : 0);
@@ -233,17 +291,19 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
       const kbdBrake = keys['ArrowDown'] || keys['KeyS'] ? 1 : 0;
       const kbdNitro = Boolean(keys['ShiftLeft'] || keys['ShiftRight'] || keys['Space']);
       const hasKbdInput = kbdSteer !== 0 || kbdThrottle !== 0 || kbdBrake !== 0 || kbdNitro;
-      const phoneInputRecent = Date.now() - lastPacketTimeRef.current < 250;
+      const phoneInputRecent = receiverRef.current.isRecent(Date.now(), 250);
 
       let input: ControllerInput;
       if (hasKbdInput || !phoneInputRecent) {
         input = { steer: kbdSteer, throttle: kbdThrottle, brake: kbdBrake, nitro: kbdNitro, seq: 0, timestamp: Date.now() };
         inputSourceRef.current = 'keyboard';
       } else {
-        input = activeInputRef.current;
+        input = receiverRef.current.getActiveInput(Date.now(), 250);
         inputSourceRef.current = 'phone';
       }
 
+      const heatEvents: HeatEvent[] = [];
+      let crashDamage = 0;
       if (phaseRef.current === 'play') {
         acc += dt;
         while (acc >= STEP) {
@@ -254,8 +314,11 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
           const tr = actors ? collideTraffic(actors, res.vehicle) : { vehicle: res.vehicle, impact: 0, hit: null };
           vehicleRef.current = tr.vehicle;
           for (const hit of [res, tr]) {
-            const dmg = damageFrom(hit.impact, hit.hit);
-            if (dmg > 0) {
+            const dmg = damageFrom(hit.impact, hit.hit, w.city.id);
+            if (dmg > 0 && now - lastDamageTimeRef.current >= 250) {
+              lastDamageTimeRef.current = now;
+              crashDamage += dmg;
+              if (hit.hit === 'traffic' && !heatEvents.includes('traffic-crash')) heatEvents.push('traffic-crash');
               integrityRef.current = Math.max(0, integrityRef.current - dmg);
               shakeRef.current = Math.min(14, shakeRef.current + hit.impact / 40);
               if (hit.impact > 160) setFlash((f) => f + 1);
@@ -264,34 +327,53 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
         }
         elapsedRef.current += dt;
 
-        const v = vehicleRef.current;
-        if (Math.hypot(v.x - w.extraction.x, v.y - w.extraction.y) < EXTRACT_RADIUS) {
-          const time = elapsedRef.current;
-          const prev = readBest(w.city.id);
-          writeBest(w.city.id, time);
-          setResult({ time, best: prev, newBest: prev === null || time < prev });
-          setPhase('won');
-        } else if (integrityRef.current <= 0) {
-          setResult({ time: elapsedRef.current, best: readBest(w.city.id), newBest: false });
-          setPhase('lost');
-        }
       } else {
         acc = 0;
       }
 
       // living city: traffic always moves; officers only open fire after a 2 s grace period while you drive
       const actors = actorsRef.current;
+      let bulletDamage = 0;
       if (actors) {
         const ev = updateActors(actors, w, vehicleRef.current, Math.min(dt, 0.05), phaseRef.current === 'play' && elapsedRef.current > 2);
+        if (ev.shotsFired > 0) heatEvents.push('shot-at');
+        if (ev.officerStunned) heatEvents.push('officer-down');
         if (ev.bulletDamage > 0 && phaseRef.current === 'play') {
+          bulletDamage = ev.bulletDamage;
+          heatEvents.push('hit');
           integrityRef.current = Math.max(0, integrityRef.current - ev.bulletDamage);
           shakeRef.current = Math.min(14, shakeRef.current + 5);
           setFlash((f) => f + 1);
         }
-        if (ev.shotsFired > 0 && now - lastFireToastRef.current > 6000) {
+        if (ev.shotsFired > 0 && !crimeRef.current && now - lastFireToastRef.current > 6000) {
           lastFireToastRef.current = now;
           setToast('Under fire — break line of sight');
         }
+      }
+
+      // mission rules + outcome
+      if (phaseRef.current === 'play') {
+        const v = vehicleRef.current;
+        const crime = crimeRef.current;
+        const loss = crime
+          ? crimeStep(crime, { t: elapsedRef.current, dt: Math.min(dt, 0.05), events: heatEvents, crashDamage, bulletDamage, world: w, vehicle: v, actors })
+          : null;
+        const finish = (outcome: Outcome, won: boolean) => {
+          const time = elapsedRef.current;
+          const prev = readBest(w.city.id);
+          const isCourier = !crime;
+          if (won && isCourier) writeBest(w.city.id, time);
+          const stats: ResultStat[] = [{ label: 'Package', value: `${Math.round(integrityRef.current)}%`, icon: 'cargo', highlight: integrityRef.current < 30 }];
+          if (crime) {
+            stats.push({ label: 'Vehicle', value: `${Math.round(crime.vehicle)}%`, icon: 'vehicle', highlight: crime.vehicle < 30 });
+            stats.push({ label: `Peak heat · ${HEAT_LABELS[Math.min(5, Math.floor(crime.peakHeat))]}`, value: `${Math.floor(crime.peakHeat)}/5`, icon: 'heat', highlight: crime.peakHeat >= PURSUIT_AT });
+          }
+          setResult({ time, best: prev, newBest: won && isCourier && (prev === null || time < prev), outcome, stats });
+          setPhase(won ? 'won' : 'lost');
+        };
+        if (Math.hypot(v.x - w.extraction.x, v.y - w.extraction.y) < EXTRACT_RADIUS) finish('escaped', true);
+        else if (integrityRef.current <= 0) finish('package-lost', false);
+        else if (loss) finish(loss, false);
       }
 
       // adaptive resolution: drop to 0.75× if frames run long, recover when smooth
@@ -317,11 +399,14 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
       shakeRef.current *= 0.88;
       const sh = shakeRef.current;
       ctx.setTransform(scaleRef.current, 0, 0, scaleRef.current, 0, 0);
+      const cam = (cameraRef.current = updateCamera(cameraRef.current ?? createCamera(vehicleRef.current), vehicleRef.current, Math.min(dt, 0.05), cssW, cssH));
       renderGame(ctx, cssW, cssH, vehicleRef.current, w, {
         time: (now - t0) / 1000,
         shakeX: sh > 0.3 ? (Math.random() - 0.5) * sh : 0,
         shakeY: sh > 0.3 ? (Math.random() - 0.5) * sh : 0,
-        actors: actorsRef.current ?? undefined
+        actors: actorsRef.current ?? undefined,
+        camera: cam,
+        route: guidanceRef.current && phaseRef.current === 'play' ? routeRef.current : undefined
       });
     };
     animId = requestAnimationFrame(loop);
@@ -337,6 +422,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
       const dx = w.extraction.x - v.x;
       const dy = w.extraction.y - v.y;
       const district = districtAt(w, v.x, v.y);
+      routeRef.current = routePolyline(w, v.x, v.y, v.angle);
       if (phaseRef.current === 'play' && district !== districtRef.current) {
         if (districtRef.current) setToast(district);
         districtRef.current = district;
@@ -351,14 +437,30 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
         bearing: Math.atan2(dy, dx),
         district
       });
+      const crime = crimeRef.current;
+      if (crime && phaseRef.current !== 'select' && phaseRef.current !== 'mission') {
+        setCrimeHud({
+          heat: crime.heat.value,
+          pursuit: crime.heat.value >= PURSUIT_AT,
+          vehicleHealth: crime.vehicle,
+          integrity: integrityRef.current,
+          markers: dangerMarkers(actorsRef.current, v),
+          radio: crime.radio,
+          route: nextTurn(w, v.x, v.y, v.angle),
+          objective: { name: w.extraction.name, distM: Math.hypot(dx, dy) * METERS_PER_PX, bearing: Math.atan2(dy, dx), time: elapsedRef.current }
+        });
+      }
     }, 100);
     return () => window.clearInterval(t);
   }, []);
 
   const controllerUrl = getControllerUrl(roomCode);
   const connected = networkState.status === 'connected';
+  const rttDisplay = networkState.rttMetrics && networkState.rttMetrics.samplesCount >= 3
+    ? `${networkState.pingMs} ms (med: ${networkState.rttMetrics.median} ms · p95: ${networkState.rttMetrics.p95} ms)`
+    : `${networkState.pingMs} ms`;
   const statusText = connected
-    ? `Phone linked · ${networkState.pingMs} ms`
+    ? `Phone linked · ${rttDisplay}`
     : networkState.status === 'error'
       ? 'Signal error — reload to retry'
       : networkState.status === 'reconnecting'
@@ -375,8 +477,13 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
         <CitySelect onPick={pickCity} onBack={onExit} onPair={() => setShowPairingModal(true)} phoneLinked={connected} />
       )}
 
-      {phase !== 'select' && world && (
+      {phase === 'mission' && city && (
+        <MissionSelect city={city} onPick={pickMission} onBack={backToSelect} onPair={() => setShowPairingModal(true)} phoneLinked={connected} />
+      )}
+
+      {phase !== 'select' && phase !== 'mission' && world && (
         <>
+          {mission?.id === 'crime' && crimeHud && phase === 'play' && <CrimeHud state={crimeHud} />}
           {/* Crash flash */}
           {flash > 0 && (
             <div
@@ -397,9 +504,9 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
               <button
-                onClick={backToSelect}
+                onClick={backToMission}
                 className="glass-light reveal-fade"
-                aria-label="Choose another city"
+                aria-label="Change mission"
                 style={{ ...i(0), pointerEvents: 'auto', width: 40, height: 40, display: 'grid', placeItems: 'center', cursor: 'pointer', color: 'var(--gold-pale)' }}
               >
                 <ArrowLeft size={16} />
@@ -478,21 +585,28 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
                   <Flame size={11} /> Nitro
                 </span>
               </div>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                  <span className="kicker" style={{ fontSize: 8, display: 'flex', gap: 5, alignItems: 'center' }}>
-                    <Shield size={10} /> Package
-                  </span>
-                  <span className="num" style={{ fontSize: 11, color: integrityColor }}>
-                    {hud.integrity}%
-                  </span>
+              {mission?.id === 'crime' && crimeHud ? (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <Meter label="Vehicle" value={crimeHud.vehicleHealth} icon={<IconWrench size={12} />} compact />
+                  <Meter label="Package" value={crimeHud.integrity} icon={<IconCargo size={12} />} compact />
                 </div>
-                <div style={{ height: 5, borderRadius: 3, background: 'rgba(241,216,168,0.1)', overflow: 'hidden' }}>
-                  <div style={{ width: `${hud.integrity}%`, height: '100%', background: integrityColor, transition: 'width 200ms, background 300ms' }} />
+              ) : (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                    <span className="kicker" style={{ fontSize: 8, display: 'flex', gap: 5, alignItems: 'center' }}>
+                      <Shield size={10} /> Package
+                    </span>
+                    <span className="num" style={{ fontSize: 11, color: integrityColor }}>
+                      {hud.integrity}%
+                    </span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 3, background: 'rgba(241,216,168,0.1)', overflow: 'hidden' }}>
+                    <div style={{ width: `${hud.integrity}%`, height: '100%', background: integrityColor, transition: 'width 200ms, background 300ms' }} />
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="kicker" style={{ fontSize: 8, color: 'var(--dim)' }}>
-                R restart · P pair
+                R restart · P pair · G route
               </div>
             </div>
           </div>
@@ -505,48 +619,33 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
             <Minimap world={world} x={vehicleRef.current.x} y={vehicleRef.current.y} angle={vehicleRef.current.angle} />
           </div>
 
-          {/* Result overlay */}
+          {/* Result overlay (mode-aware) */}
           {(phase === 'won' || phase === 'lost') && result && (
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: 'grid',
-                placeItems: 'center',
-                background: 'radial-gradient(80% 80% at 50% 45%, rgba(40,24,10,0.7), rgba(10,6,3,0.92))',
-                zIndex: 80,
-                animation: 'fadeIn 500ms var(--ease-out) both',
-                padding: 20
-              }}
-            >
-              <div className="rays" style={{ opacity: phase === 'won' ? 0.8 : 0.3 }} />
-              <div className="glass reveal-scale" style={{ ...i(0), position: 'relative', padding: '40px 48px', textAlign: 'center', maxWidth: 520 }}>
-                <span className="kicker reveal" style={i(1)}>
-                  {phase === 'won' ? `${world.city.name} · Extraction reached` : `${world.city.name} · Run over`}
-                </span>
-                <h2 className="serif gold-text" style={{ fontSize: 64, fontWeight: 400, lineHeight: 1, margin: '14px 0 10px' }}>
-                  <Letters text={phase === 'won' ? 'Escaped' : 'Package lost'} />
-                </h2>
-                <p className="serif reveal" style={{ ...i(4), fontStyle: 'italic', fontSize: 19, color: 'var(--gold-pale)' }}>
-                  {phase === 'won'
-                    ? `You made ${world.extraction.name} in ${fmtTime(result.time)}.`
-                    : 'Too many crashes — the cargo didn’t survive the city.'}
-                </p>
-                {phase === 'won' && (
-                  <p className="kicker reveal num" style={{ ...i(5), marginTop: 12, color: result.newBest ? 'var(--gold)' : 'var(--muted)' }}>
-                    {result.newBest ? 'New best time' : result.best !== null ? `Best ${fmtTime(result.best)}` : ''}
-                  </p>
-                )}
-                <div className="reveal" style={{ ...i(6), display: 'flex', gap: 12, justifyContent: 'center', marginTop: 28, flexWrap: 'wrap' }}>
-                  <button className="btn btn-gold" onClick={restart}>
-                    <RotateCcw size={15} /> Drive again
-                  </button>
-                  <button className="btn btn-ghost" onClick={backToSelect}>
-                    <MapIcon size={15} /> Choose city
-                  </button>
-                </div>
-              </div>
-            </div>
+            <MissionResult
+              mode={mission?.id ?? 'courier'}
+              outcome={result.outcome}
+              cityName={world.city.name}
+              time={result.time}
+              stats={result.stats}
+              line={
+                {
+                  escaped: mission?.id === 'crime' ? `You shook the police and made ${world.extraction.name}.` : `You made ${world.extraction.name} in ${fmtTime(result.time)}.`,
+                  'package-lost': 'Too much damage — the cargo didn’t survive the city.',
+                  wrecked: 'The car gave out before the police did.',
+                  busted: 'You stopped too close to the law. Cuffs on, cargo seized.',
+                  extracted: `The evac lifted off with you aboard.`,
+                  overrun: 'The horde closed in before you reached the evac.',
+                  'evac-missed': 'The last airlift left without you.',
+                  'rescue-complete': 'Every survivor reached the safe zone.',
+                  'rescue-partial': 'Some made it out. The city will remember the rest.',
+                  'rescue-failed': 'Nobody reached the safe zone tonight.'
+                }[result.outcome]
+              }
+              note={result.newBest ? 'New best time' : !mission || mission.id === 'courier' ? (result.best !== null && phase === 'won' ? `Best ${fmtTime(result.best)}` : undefined) : undefined}
+              onRetry={restart}
+              onMission={backToMission}
+              onCity={backToSelect}
+            />
           )}
         </>
       )}

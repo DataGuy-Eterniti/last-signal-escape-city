@@ -20,11 +20,11 @@ In compliance with the project owner policy, transparent development guidelines,
 
 ### 2. Google Antigravity
 - **Role**: AI coding assistant and implementation agent.
-- **Scope**: Code scaffolding, refactoring, test execution, Base44 CLI workflow coordination, and technical verification under the direct guidance and explicit review of the human project owner.
+- **Scope**: Code scaffolding, refactoring, test execution, Base44 CLI workflow coordination, and technical verification under the direct guidance and explicit review of the human project owner. Implemented speed-sensitive steering curves, cornering tire scrub, caster road-alignment, and controller thumb-arc brake isolation on `fix/driving-steering-and-turns`. Validated full test suites (98 tests passing) and production build. Note: Physical driving acceptance (straight driving and 90° intersection turns) remains tracked as unresolved pending owner physical retest. Safe integration of all completed branches into `main`.
 
 ### 3. Anthropic Claude
 - **Role**: UI/UX and product design, game-systems design, and code generation.
-- **Scope**: Produced the Gold Noir redesign of all screens and motion, the city-block renderer, the city modes (New York, Lagos Island, Chicago, Gold City), solid obstacles and collisions, traffic, armed checkpoint officers, per-object colour variation, and performance tuning. Code is delivered to the project owner, who reviews, tests and commits it under their own identity. Claude is a tool only and is not listed as a Git contributor, author or `Co-authored-by` entity.
+- **Scope**: Produced the Gold Noir redesign of all screens and motion, the city-block renderer, the city modes (New York, Lagos Island, Chicago, Gold City), solid obstacles and collisions, traffic, armed checkpoint officers, per-object colour variation, and performance tuning. For Gold Noir 2.0 (to the owner's design brief): the 360° phone controller (Classic/Advanced modes, D-pad, left-handed layout), mission selection, Crime City and Zombie Outbreak HUDs, mission results, the icon set and the `/design` review sheet; the road-visibility pass (lane markings, junction and solid-object contrast, route guidance ribbon, look-ahead camera); and the Gold Noir 3.0 Rescue Run design (survivor markers, boarding and safe-zone visuals, rescue HUD, navigation levels, results and the rescue rules model). Code is delivered to the project owner, who reviews, tests and commits it under their own identity. Claude is a tool only and is not listed as a Git contributor, author or `Co-authored-by` entity.
 
 ## Policy & Attribution Rules
 - All code generated or suggested by AI tools undergoes review, testing, and validation by the project owner.

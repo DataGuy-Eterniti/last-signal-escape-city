@@ -17,14 +17,22 @@ const C = {
   asphalt: '#100a05',
   seam: 'rgba(241, 216, 168, 0.025)',
   sidewalk: '#22160b',
-  curb: 'rgba(241, 216, 168, 0.20)',
-  dash: 'rgba(241, 216, 168, 0.30)',
-  laneEdge: 'rgba(255, 195, 77, 0.10)',
-  zebra: 'rgba(241, 216, 168, 0.16)',
+  curb: 'rgba(241, 216, 168, 0.42)', // road-edge contrast (was 0.20)
+  dash: 'rgba(255, 214, 140, 0.50)', // centre line (was 0.30, 2px → 3px)
+  laneEdge: 'rgba(255, 195, 77, 0.24)', // parking-lane line (was 0.10, 1px → 2px)
+  zebra: 'rgba(241, 216, 168, 0.26)',
+  junction: '#17100a', // junction box reads slightly lighter than the road
+  stop: 'rgba(241, 216, 168, 0.34)',
+  solidRim: 'rgba(255, 214, 150, 0.30)', // crisp outline on anything solid
   water: '#0b0f0d',
   label: 'rgba(241, 216, 168, 0.62)',
   roadLabel: 'rgba(241, 216, 168, 0.30)'
 };
+
+/* Road marking geometry — derived from ROAD so it follows any width change in world.ts */
+const EDGE_IN = Math.round(ROAD * 0.09); // parking-lane line, in from the kerb
+const DASH = Math.round(ROAD * 0.15);
+const DASH_GAP = Math.round(ROAD * 0.12);
 
 const SANS = 'Inter, "Segoe UI", Arial, sans-serif';
 const SERIF = '"Cormorant Garamond", Georgia, serif';
@@ -130,8 +138,12 @@ function drawBlock(b: CanvasRenderingContext2D, block: Block) {
   b.fillStyle = C.sidewalk;
   b.fillRect(0, 0, INNER, INNER);
   b.strokeStyle = C.curb;
-  b.lineWidth = 1.5;
-  b.strokeRect(0.75, 0.75, INNER - 1.5, INNER - 1.5);
+  b.lineWidth = 2;
+  b.strokeRect(1, 1, INNER - 2, INNER - 2);
+  // inner line where sidewalk meets the lot
+  b.strokeStyle = 'rgba(241, 216, 168, 0.08)';
+  b.lineWidth = 1;
+  b.strokeRect(SIDEWALK - 0.5, SIDEWALK - 0.5, INNER - SIDEWALK * 2 + 1, INNER - SIDEWALK * 2 + 1);
   b.fillStyle = 'rgba(241, 216, 168, 0.05)';
   for (let p = 24; p < INNER; p += 24) {
     b.fillRect(p, 2, 1, SIDEWALK - 4);
@@ -229,6 +241,13 @@ function drawBuilding(b: CanvasRenderingContext2D, bd: Building, stall = false) 
   b.fillStyle = 'rgba(0, 0, 0, 0.38)';
   b.fillRect(x, y + h - 2, w, 2);
   b.fillRect(x + w - 2, y, 2, h);
+  // solid-object language: dark keyline + thin gold rim on every collidable footprint
+  b.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+  b.lineWidth = 2;
+  b.strokeRect(x - 1, y - 1, w + 2, h + 2);
+  b.strokeStyle = C.solidRim;
+  b.lineWidth = 1;
+  b.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
 
   if (stall) {
     // striped awnings in the stall's own colour
@@ -382,11 +401,12 @@ function drawPark(b: CanvasRenderingContext2D, x0: number, y0: number, block: Bl
     const ty = y0 + 14 + hashN(seed, t * 3 + 1) * (LOT - 28);
     if (Math.abs(tx - (x0 + LOT / 2)) < 18 || Math.abs(ty - (y0 + LOT / 2)) < 18) continue;
     const r = 9 + hashN(seed, t * 3 + 2) * 9;
-    b.fillStyle = 'rgba(0,0,0,0.45)';
+    // canopy is not solid: no hard shadow, lower contrast than buildings
+    b.fillStyle = 'rgba(0,0,0,0.18)';
     b.beginPath();
-    b.arc(tx + 4, ty + 4, r, 0, Math.PI * 2);
+    b.arc(tx + 2, ty + 2, r, 0, Math.PI * 2);
     b.fill();
-    b.fillStyle = '#2a2410';
+    b.fillStyle = 'rgba(42, 36, 16, 0.75)';
     b.beginPath();
     b.arc(tx, ty, r, 0, Math.PI * 2);
     b.fill();
@@ -433,23 +453,43 @@ function drawFountain(b: CanvasRenderingContext2D, cx: number, cy: number) {
 /* ---------- shared sprites ---------- */
 
 let crossing: HTMLCanvasElement | null = null;
-const ZEBRA = 22;
+const ZEBRA = Math.max(18, Math.round(ROAD * 0.14));
+const STOP_W = 4;
 function getCrossing(): HTMLCanvasElement | null {
   if (crossing) return crossing;
-  const size = ROAD + ZEBRA * 2 + 8;
+  const size = ROAD + (ZEBRA + STOP_W + 6) * 2 + 8;
   const made = makeCanvas(size, size);
   if (!made) return null;
   const [c, x] = made;
-  const o = ZEBRA + 4;
-  x.fillStyle = C.asphalt;
-  x.fillRect(o + 1, o + 1, ROAD - 2, ROAD - 2); // clean intersection square
+  const o = ZEBRA + STOP_W + 10;
+  // junction box: a touch lighter than the road so turns read at a glance
+  x.fillStyle = C.junction;
+  x.fillRect(o, o, ROAD, ROAD);
+  // corner kerb highlights (where the four blocks meet the junction)
+  x.fillStyle = C.curb;
+  for (const [cx, cy] of [
+    [o, o],
+    [o + ROAD, o],
+    [o, o + ROAD],
+    [o + ROAD, o + ROAD]
+  ])
+    x.fillRect(cx - 1.5, cy - 1.5, 3, 3);
+  // zebra crossings on all four approaches
   x.fillStyle = C.zebra;
-  for (let s = 10; s < ROAD - 10; s += 14) {
-    x.fillRect(o + s, 2, 7, ZEBRA);
-    x.fillRect(o + s, o + ROAD + 2, 7, ZEBRA);
-    x.fillRect(2, o + s, ZEBRA, 7);
-    x.fillRect(o + ROAD + 2, o + s, ZEBRA, 7);
+  const stripe = Math.max(6, Math.round(ROAD * 0.045));
+  const step = stripe * 2;
+  for (let s = EDGE_IN; s < ROAD - EDGE_IN - stripe + 1; s += step) {
+    x.fillRect(o + s, o - ZEBRA - 2, stripe, ZEBRA);
+    x.fillRect(o + s, o + ROAD + 2, stripe, ZEBRA);
+    x.fillRect(o - ZEBRA - 2, o + s, ZEBRA, stripe);
+    x.fillRect(o + ROAD + 2, o + s, ZEBRA, stripe);
   }
+  // stop bars just outside each zebra (right-hand traffic: the inbound half)
+  x.fillStyle = C.stop;
+  x.fillRect(o, o - ZEBRA - STOP_W - 6, ROAD / 2, STOP_W); // southbound arrivals stop on the west half
+  x.fillRect(o + ROAD / 2, o + ROAD + ZEBRA + 6, ROAD / 2, STOP_W); // northbound on the east half
+  x.fillRect(o + ROAD + ZEBRA + 6, o, STOP_W, ROAD / 2); // westbound on the north half
+  x.fillRect(o - ZEBRA - STOP_W - 6, o + ROAD / 2, STOP_W, ROAD / 2); // eastbound on the south half
   crossing = c;
   return c;
 }
@@ -799,7 +839,67 @@ function drawActors(ctx: CanvasRenderingContext2D, world: World, a: Actors, camX
   }
 }
 
-function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, camY: number, w: number, h: number, time: number, actors?: Actors) {
+/**
+ * Extraction route ribbon: a soft gold band with chevrons flowing toward the
+ * goal, laid along the road centre line. Fades out with distance so it guides
+ * without cluttering the road.
+ */
+function drawRoute(ctx: CanvasRenderingContext2D, route: { x: number; y: number }[], camX: number, camY: number, time: number) {
+  if (route.length < 2) return;
+  const sx = (x: number) => x - camX;
+  const sy = (y: number) => y - camY;
+  const MAX = 1600; // px of route shown ahead of the car
+  // band
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(255, 195, 77, 0.10)';
+  ctx.lineWidth = Math.round(ROAD * 0.22);
+  ctx.beginPath();
+  ctx.moveTo(sx(route[0].x), sy(route[0].y));
+  let total = 0;
+  for (let k = 1; k < route.length && total < MAX; k++) {
+    total += Math.hypot(route[k].x - route[k - 1].x, route[k].y - route[k - 1].y);
+    ctx.lineTo(sx(route[k].x), sy(route[k].y));
+  }
+  ctx.stroke();
+  // flowing chevrons
+  const gap = 46;
+  const phase = (time * 70) % gap;
+  let along = 0;
+  ctx.fillStyle = '#ffc34d';
+  for (let k = 1; k < route.length; k++) {
+    const a = route[k - 1];
+    const b = route[k];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 1) continue;
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    for (let d = (gap - ((along - phase) % gap)) % gap; d < len; d += gap) {
+      const dist = along + d;
+      if (dist > MAX) break;
+      if (dist < 40) continue; // keep the car itself clear
+      ctx.globalAlpha = 0.75 * (1 - dist / MAX);
+      const px = sx(a.x + Math.cos(ang) * d);
+      const py = sy(a.y + Math.sin(ang) * d);
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(ang);
+      ctx.beginPath();
+      ctx.moveTo(7, 0);
+      ctx.lineTo(-5, -7);
+      ctx.lineTo(-2, 0);
+      ctx.lineTo(-5, 7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    along += len;
+    if (along > MAX) break;
+  }
+  ctx.restore();
+}
+
+function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, camY: number, w: number, h: number, time: number, actors?: Actors, route?: { x: number; y: number }[]) {
   const halfW = w / 2;
   const halfH = h / 2;
   const left = camX - halfW;
@@ -844,21 +944,21 @@ function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, cam
 
   // lane paint between intersections
   ctx.strokeStyle = C.dash;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([22, 20]);
+  ctx.lineWidth = 3;
+  ctx.setLineDash([DASH, DASH_GAP]);
   ctx.beginPath();
   for (let k = ri0; k <= ri1; k++) {
     const x = sx(roadX(k));
     for (let j = rj0; j < rj1; j++) {
-      ctx.moveTo(x, sy(roadY(j) + HR + ZEBRA + 10));
-      ctx.lineTo(x, sy(roadY(j + 1) - HR - ZEBRA - 10));
+      ctx.moveTo(x, sy(roadY(j) + HR + ZEBRA + STOP_W + 16));
+      ctx.lineTo(x, sy(roadY(j + 1) - HR - ZEBRA - STOP_W - 16));
     }
   }
   for (let k = rj0; k <= rj1; k++) {
     const y = sy(roadY(k));
     for (let i = ri0; i < ri1; i++) {
-      ctx.moveTo(sx(roadX(i) + HR + ZEBRA + 10), y);
-      ctx.lineTo(sx(roadX(i + 1) - HR - ZEBRA - 10), y);
+      ctx.moveTo(sx(roadX(i) + HR + ZEBRA + STOP_W + 16), y);
+      ctx.lineTo(sx(roadX(i + 1) - HR - ZEBRA - STOP_W - 16), y);
     }
   }
   ctx.stroke();
@@ -872,13 +972,13 @@ function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, cam
   const roadRight = roadX(blocksX) + HR;
   for (let k = ri0; k <= ri1; k++) {
     const x = roadX(k);
-    ctx.fillRect(sx(x - HR + 14), sy(roadTop), 1, roadBottom - roadTop);
-    ctx.fillRect(sx(x + HR - 15), sy(roadTop), 1, roadBottom - roadTop);
+    ctx.fillRect(sx(x - HR + EDGE_IN), sy(roadTop), 2, roadBottom - roadTop);
+    ctx.fillRect(sx(x + HR - EDGE_IN - 2), sy(roadTop), 2, roadBottom - roadTop);
   }
   for (let k = rj0; k <= rj1; k++) {
     const y = roadY(k);
-    ctx.fillRect(sx(roadLeft), sy(y - HR + 14), roadRight - roadLeft, 1);
-    ctx.fillRect(sx(roadLeft), sy(y + HR - 15), roadRight - roadLeft, 1);
+    ctx.fillRect(sx(roadLeft), sy(y - HR + EDGE_IN), roadRight - roadLeft, 2);
+    ctx.fillRect(sx(roadLeft), sy(y + HR - EDGE_IN - 2), roadRight - roadLeft, 2);
   }
 
   // intersections
@@ -895,13 +995,13 @@ function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, cam
     ctx.globalCompositeOperation = 'lighter';
     for (let k = ri0; k <= ri1; k++)
       for (let m = rj0; m <= rj1; m++)
-        for (const [dx, dy] of CORNERS) ctx.drawImage(light, sx(roadX(k) + dx * (HR + 6)) - LAMP_R, sy(roadY(m) + dy * (HR + 6)) - LAMP_R);
+        for (const [dx, dy] of CORNERS) ctx.drawImage(light, sx(roadX(k) + dx * (HR + SIDEWALK * 0.4)) - LAMP_R, sy(roadY(m) + dy * (HR + SIDEWALK * 0.4)) - LAMP_R);
     ctx.globalCompositeOperation = 'source-over';
   }
   ctx.fillStyle = '#ffe2a0';
   for (let k = ri0; k <= ri1; k++)
     for (let m = rj0; m <= rj1; m++)
-      for (const [dx, dy] of CORNERS) ctx.fillRect(sx(roadX(k) + dx * (HR + 6)) - 2, sy(roadY(m) + dy * (HR + 6)) - 2, 4, 4);
+      for (const [dx, dy] of CORNERS) ctx.fillRect(sx(roadX(k) + dx * (HR + SIDEWALK * 0.4)) - 2, sy(roadY(m) + dy * (HR + SIDEWALK * 0.4)) - 2, 4, 4);
   ctx.restore();
 
   // street names (one per visible segment, beside the centre line)
@@ -913,7 +1013,7 @@ function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, cam
       const my = (roadY(j) + roadY(j + 1)) / 2;
       if (my < top - 200 || my > bottom + 200) continue;
       ctx.save();
-      ctx.translate(sx(roadX(k)) + 18, sy(my));
+      ctx.translate(sx(roadX(k)) + Math.round(ROAD * 0.11), sy(my));
       ctx.rotate(Math.PI / 2);
       ctx.drawImage(spr, -spr.width / 2, -spr.height / 2);
       ctx.restore();
@@ -926,7 +1026,7 @@ function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, cam
     for (let i = ri0; i < ri1; i++) {
       const mx = (roadX(i) + roadX(i + 1)) / 2;
       if (mx < left - 200 || mx > right + 200) continue;
-      ctx.drawImage(spr, sx(mx) - spr.width / 2, sy(roadY(m)) + 8);
+      ctx.drawImage(spr, sx(mx) - spr.width / 2, sy(roadY(m)) + Math.round(ROAD * 0.05));
     }
   }
 
@@ -947,6 +1047,8 @@ function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, cam
   for (const bar of world.barricades) {
     for (const r of bar.rects) {
       if (r.x > right || r.y > bottom || r.x + r.w < left || r.y + r.h < top) continue;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(sx(r.x) - 2, sy(r.y) - 2, r.w + 4, r.h + 4);
       ctx.fillStyle = '#d8c7a4';
       ctx.fillRect(sx(r.x), sy(r.y), r.w, r.h);
       ctx.fillStyle = '#c2622d';
@@ -979,6 +1081,8 @@ function drawCity(ctx: CanvasRenderingContext2D, world: World, camX: number, cam
     }
     ctx.globalCompositeOperation = 'source-over';
   }
+
+  if (route) drawRoute(ctx, route, camX, camY, time);
 
   if (actors) drawActors(ctx, world, actors, camX, camY, halfW, halfH, time);
 
@@ -1068,6 +1172,48 @@ export interface RenderOptions {
   shakeX?: number;
   shakeY?: number;
   actors?: Actors;
+  /** look-ahead camera (engine/camera.ts); defaults to centring on the car at zoom 1 */
+  camera?: { x: number; y: number; zoom: number };
+  /** extraction route polyline in world px (car → junctions → goal) */
+  route?: { x: number; y: number }[];
+}
+
+/** Gold edge marker pointing to the extraction when it is off screen. */
+function drawGoalMarker(ctx: CanvasRenderingContext2D, width: number, height: number, gx: number, gy: number, distM: number) {
+  // safe frame that clears the HUD: header/objective on top, speed panel + minimap at the bottom
+  const L = 48;
+  const R = width - 48;
+  const T = 150;
+  const B = height - 190;
+  if (gx > L && gx < R && gy > T && gy < B) return;
+  const cx = (L + R) / 2;
+  const cy = (T + B) / 2;
+  const ang = Math.atan2(gy - cy, gx - cx);
+  const kx = (R - L) / 2 / Math.abs(Math.cos(ang) || 1e-6);
+  const ky = (B - T) / 2 / Math.abs(Math.sin(ang) || 1e-6);
+  const r = Math.min(kx, ky);
+  const px = cx + Math.cos(ang) * r;
+  const py = cy + Math.sin(ang) * r;
+  const glow = getGlow('rgba(255, 200, 100, 0.45)', 30);
+  if (glow) {
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(glow, px - 30, py - 30);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(ang);
+  ctx.fillStyle = '#ffc34d';
+  ctx.beginPath();
+  ctx.moveTo(14, 0);
+  ctx.lineTo(-8, -11);
+  ctx.lineTo(-3, 0);
+  ctx.lineTo(-8, 11);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  const label = textSprite(distM >= 1000 ? `${(distM / 1000).toFixed(1)} KM` : `${Math.round(distM / 10) * 10} M`, `600 10px ${SANS}`, '#ffc34d', 2);
+  if (label) ctx.drawImage(label, px - Math.cos(ang) * 30 - label.width / 2, py - Math.sin(ang) * 30 - label.height / 2);
 }
 
 export function renderGame(
@@ -1081,11 +1227,15 @@ export function renderGame(
   ctx.fillStyle = C.asphalt;
   ctx.fillRect(0, 0, width, height);
 
+  const cam = opts.camera ?? { x: vehicle.x, y: vehicle.y, zoom: 1 };
+  const z = cam.zoom || 1;
   ctx.save();
   ctx.translate(Math.round(width / 2 + (opts.shakeX ?? 0)), Math.round(height / 2 + (opts.shakeY ?? 0)));
-  drawCity(ctx, world, vehicle.x, vehicle.y, width, height, opts.time, opts.actors);
+  if (z !== 1) ctx.scale(z, z);
+  drawCity(ctx, world, cam.x, cam.y, width / z, height / z, opts.time, opts.actors, opts.route);
 
   // ---- courier car ----
+  ctx.translate(vehicle.x - cam.x, vehicle.y - cam.y);
   ctx.rotate(vehicle.angle + Math.PI / 2);
   const carW = 28;
   const carH = 52;
@@ -1188,4 +1338,8 @@ export function renderGame(
 
   const ov = getOverlay(width, height);
   if (ov) ctx.drawImage(ov, 0, 0);
+
+  // off-screen extraction marker (screen space, above the vignette)
+  const ex = world.extraction;
+  drawGoalMarker(ctx, width, height, width / 2 + (ex.x - cam.x) * z, height / 2 + (ex.y - cam.y) * z, Math.hypot(ex.x - vehicle.x, ex.y - vehicle.y) * 0.1);
 }
