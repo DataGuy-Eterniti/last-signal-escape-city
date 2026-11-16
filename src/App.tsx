@@ -4,6 +4,7 @@ import { LandingRoute } from './routes/LandingRoute';
 // Route-level code splitting: the phone only downloads the controller, the
 // laptop only downloads the game engine. Keeps first load small on mobile data.
 const GameRoute = lazy(() => import('./routes/GameRoute').then((m) => ({ default: m.GameRoute })));
+const DesignRoute = lazy(() => import('./routes/DesignRoute').then((m) => ({ default: m.DesignRoute })));
 const ControllerRoute = lazy(() => import('./routes/ControllerRoute').then((m) => ({ default: m.ControllerRoute })));
 
 const Loading: React.FC = () => (
@@ -12,7 +13,7 @@ const Loading: React.FC = () => (
   </div>
 );
 
-export type Route = 'menu' | 'game' | 'controller';
+export type Route = 'menu' | 'game' | 'controller' | 'design';
 
 const resolveRoute = (): Route => {
   const pathname = window.location.pathname.toLowerCase();
@@ -21,10 +22,11 @@ const resolveRoute = (): Route => {
 
   if (pathname.includes('/controller') || mode === 'controller' || params.has('room')) return 'controller';
   if (pathname.includes('/game') || mode === 'game') return 'game';
+  if (pathname.includes('/design') || mode === 'design') return 'design';
   return 'menu';
 };
 
-const PATHS: Record<Route, string> = { menu: '/', game: '/game', controller: '/controller' };
+const PATHS: Record<Route, string> = { menu: '/', game: '/game', controller: '/controller', design: '/design' };
 
 export const App: React.FC = () => {
   const [route, setRoute] = useState<Route>(resolveRoute);
@@ -60,6 +62,7 @@ export const App: React.FC = () => {
       <Suspense fallback={<Loading />}>
         {route === 'game' && <GameRoute onExit={() => navigate('menu')} />}
         {route === 'controller' && <ControllerRoute onExit={() => navigate('menu')} />}
+        {route === 'design' && <DesignRoute />}
       </Suspense>
       {route === 'menu' && <LandingRoute onNavigate={navigate} />}
     </div>

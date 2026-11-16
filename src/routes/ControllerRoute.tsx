@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Flame, ArrowLeft, ArrowRight, RotateCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { ControllerInput, RoomConnectionState } from '../types';
 import { ControllerNetwork } from '../network/webrtc';
 import { isValidRoomCode } from '../utils/room';
 import { GoldBackdrop, Letters } from '../components/Ornaments';
+import { Cockpit } from '../components/controller/Cockpit';
 
 const i = (n: number) => ({ ['--i' as string]: n } as React.CSSProperties);
 
@@ -32,16 +33,6 @@ export const ControllerRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) =
   const throttleRef = useRef<number>(0);    // 0.0 to 1.0
   const brakeRef = useRef<number>(0);       // 0.0 to 1.0
   const nitroRef = useRef<boolean>(false);
-
-  // Visual UI feedback states
-  const [isGasPressed, setIsGasPressed] = useState<boolean>(false);
-  const [isBrakePressed, setIsBrakePressed] = useState<boolean>(false);
-  const [isNitroPressed, setIsNitroPressed] = useState<boolean>(false);
-  const [steerDisplay, setSteerDisplay] = useState<number>(0);
-
-  // Joystick touch tracking
-  const joystickTouchIdRef = useRef<number | null>(null);
-  const joystickCenterRef = useRef<{ x: number; y: number } | null>(null);
 
   // Connect to Host WebRTC Room
   const connectToRoom = useCallback((roomToJoin: string) => {
@@ -90,70 +81,6 @@ export const ControllerRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) =
 
     return () => clearInterval(timer);
   }, [networkState.status]);
-
-  // Virtual Joystick Touch Handlers
-  const handleJoystickTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    const touch = e.changedTouches[0];
-    joystickTouchIdRef.current = touch.identifier;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    joystickCenterRef.current = { x: centerX, y: centerY };
-
-    updateJoystickPosition(touch.clientX, rect.width / 2);
-  };
-
-  const handleJoystickTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (joystickTouchIdRef.current === null) return;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const touch = e.changedTouches[i];
-      if (touch.identifier === joystickTouchIdRef.current) {
-        const rect = e.currentTarget.getBoundingClientRect();
-        updateJoystickPosition(touch.clientX, rect.width / 2);
-        break;
-      }
-    }
-  };
-
-  const handleJoystickTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      if (e.changedTouches[i].identifier === joystickTouchIdRef.current) {
-        joystickTouchIdRef.current = null;
-        steerRef.current = 0;
-        setSteerDisplay(0);
-        break;
-      }
-    }
-  };
-
-  const updateJoystickPosition = (clientX: number, radius: number) => {
-    if (!joystickCenterRef.current) return;
-    const deltaX = clientX - joystickCenterRef.current.x;
-    const normalized = Math.max(-1, Math.min(1, deltaX / (radius * 0.75)));
-    steerRef.current = normalized;
-    setSteerDisplay(normalized);
-  };
-
-  // Trigger safe device vibration
-  const triggerHaptic = (ms: number = 25) => {
-    if ('vibrate' in navigator) {
-      try {
-        navigator.vibrate(ms);
-      } catch (e) {
-        // Safe ignore
-      }
-    }
-  };
-
-
-  // Portrait hint (cockpit is designed for landscape; dismissible, never blocks input)
-  const [portrait, setPortrait] = useState<boolean>(() => window.innerHeight > window.innerWidth);
-  const [hintDismissed, setHintDismissed] = useState<boolean>(false);
-  useEffect(() => {
-    const onResize = () => setPortrait(window.innerHeight > window.innerWidth);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
 
   const codeValid = isValidRoomCode(inputRoomCode);
 
@@ -252,269 +179,23 @@ export const ControllerRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) =
     );
   }
 
-  const connected = networkState.status === 'connected';
-
+  // Gold Noir 2.0 cockpit: 360° stick / D-pad, Classic & Advanced modes, left-handed layout.
+  // It only writes the same four input refs the 25 Hz sender above already reads.
   return (
-    <div
-      style={{
-        position: 'relative',
-        width: '100%',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'radial-gradient(120% 100% at 50% 0%, #2a190b 0%, #140c06 55%, #0d0804 100%)',
-        touchAction: 'none',
-        overflow: 'hidden',
-        userSelect: 'none'
+    <Cockpit
+      room={activeRoom}
+      link={networkState.status === 'connected' ? 'connected' : networkState.status === 'reconnecting' ? 'reconnecting' : 'connecting'}
+      pingMs={networkState.pingMs}
+      onLeave={() => {
+        networkRef.current?.destroy();
+        setActiveRoom(null);
       }}
-    >
-      <div className="grain" />
-
-      {/* Top status bar */}
-      <header
-        className="reveal-fade"
-        style={{
-          ...i(0),
-          position: 'relative',
-          zIndex: 2,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '10px 18px',
-          borderBottom: '1px solid var(--line)'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button
-            onClick={() => {
-              networkRef.current?.destroy();
-              setActiveRoom(null);
-            }}
-            aria-label="Leave room"
-            style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-          >
-            <ArrowLeft size={18} />
-          </button>
-          <span className="serif" style={{ fontSize: 18, color: 'var(--gold-pale)', fontStyle: 'italic' }}>
-            Last Signal
-          </span>
-          <span className="kicker num" style={{ fontSize: 10, color: 'var(--gold)' }}>
-            Room {activeRoom}
-          </span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
-          <span className={`dot ${connected ? 'ok' : ''}`} />
-          <span className="kicker num" style={{ fontSize: 10, color: connected ? 'var(--gold-pale)' : 'var(--muted)' }}>
-            {connected ? `Linked · ${networkState.pingMs} ms` : 'Connecting…'}
-          </span>
-        </div>
-      </header>
-
-      {/* Cockpit */}
-      <main style={{ position: 'relative', zIndex: 2, flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', padding: 14, gap: 14 }}>
-        {/* Left hand: steering */}
-        <section
-          className="glass reveal"
-          style={{
-            ...i(1),
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
-            position: 'relative',
-            touchAction: 'none'
-          }}
-          onTouchStart={handleJoystickTouchStart}
-          onTouchMove={handleJoystickTouchMove}
-          onTouchEnd={handleJoystickTouchEnd}
-          onTouchCancel={handleJoystickTouchEnd}
-        >
-          <span className="kicker" style={{ fontSize: 9, marginBottom: 14 }}>
-            Steer
-          </span>
-
-          <div
-            style={{
-              width: 156,
-              height: 156,
-              borderRadius: '50%',
-              position: 'relative',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              background: 'radial-gradient(circle at 50% 40%, #2c1c0d 0%, #140c06 75%)',
-              boxShadow: 'inset 0 0 0 1px rgba(241,216,168,0.22), inset 0 8px 30px rgba(0,0,0,0.6), 0 0 0 8px rgba(255,195,77,0.04)'
-            }}
-          >
-            {/* Track ticks */}
-            <div style={{ position: 'absolute', left: 18, right: 18, top: '50%', height: 1, background: 'linear-gradient(90deg, transparent, rgba(241,216,168,0.25), transparent)' }} />
-            {[-1, -0.5, 0, 0.5, 1].map((t) => (
-              <span key={t} style={{ position: 'absolute', top: 'calc(50% - 5px)', left: `calc(50% + ${t * 52}px)`, width: 1, height: 10, background: 'rgba(241,216,168,0.3)' }} />
-            ))}
-
-            {/* Thumb */}
-            <div
-              style={{
-                width: 58,
-                height: 58,
-                borderRadius: '50%',
-                background: 'radial-gradient(circle at 35% 30%, #fff1c4, #ffc34d 55%, #b9771f)',
-                boxShadow: `0 0 ${10 + Math.abs(steerDisplay) * 22}px rgba(255,195,77,${0.35 + Math.abs(steerDisplay) * 0.4}), inset 0 -3px 6px rgba(90,50,10,0.5)`,
-                transform: `translateX(${steerDisplay * 48}px)`,
-                transition: steerDisplay === 0 ? 'transform 0.12s ease-out' : 'none'
-              }}
-            />
-          </div>
-
-          <div className="serif" style={{ marginTop: 14, fontSize: 16, color: 'var(--gold-pale)', fontStyle: 'italic', minHeight: 20 }}>
-            {steerDisplay < -0.1 ? 'Left' : steerDisplay > 0.1 ? 'Right' : 'Centre'}
-          </div>
-        </section>
-
-        {/* Right hand: nitro, brake, gas */}
-        <section style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 14 }}>
-          <button
-            className="reveal"
-            onTouchStart={() => {
-              nitroRef.current = true;
-              setIsNitroPressed(true);
-              triggerHaptic(40);
-            }}
-            onTouchEnd={() => {
-              nitroRef.current = false;
-              setIsNitroPressed(false);
-            }}
-            style={{
-              ...i(2),
-              flex: 1,
-              borderRadius: 'var(--radius)',
-              border: '1px solid rgba(255,195,77,0.45)',
-              background: isNitroPressed
-                ? 'linear-gradient(180deg, #fff1c4, #ffc34d)'
-                : 'linear-gradient(160deg, rgba(255,195,77,0.14), rgba(255,195,77,0.04))',
-              color: isNitroPressed ? '#2a1808' : 'var(--gold)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 10,
-              cursor: 'pointer',
-              boxShadow: isNitroPressed ? '0 0 34px rgba(255,195,77,0.7)' : 'inset 0 1px 0 rgba(255,230,180,0.08)',
-              transform: isNitroPressed ? 'scale(0.98)' : 'none',
-              transition: 'background 120ms, box-shadow 120ms, transform 120ms'
-            }}
-          >
-            <Flame size={20} />
-            <span className="serif" style={{ fontSize: 24, letterSpacing: '0.12em' }}>
-              NITRO
-            </span>
-          </button>
-
-          <div style={{ flex: 2, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {/* Brake / reverse */}
-            <button
-              className="reveal"
-              onTouchStart={() => {
-                brakeRef.current = 1.0;
-                throttleRef.current = 0.0;
-                setIsBrakePressed(true);
-                triggerHaptic(20);
-              }}
-              onTouchEnd={() => {
-                brakeRef.current = 0.0;
-                setIsBrakePressed(false);
-              }}
-              style={{
-                ...i(3),
-                borderRadius: 'var(--radius)',
-                border: '1px solid rgba(194,98,45,0.55)',
-                background: isBrakePressed
-                  ? 'linear-gradient(180deg, #e0834a, #9c451c)'
-                  : 'linear-gradient(160deg, rgba(194,98,45,0.18), rgba(96,62,30,0.12))',
-                color: isBrakePressed ? '#fff3e2' : '#e9a06a',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                boxShadow: isBrakePressed ? '0 0 26px rgba(224,131,74,0.55)' : 'none',
-                transform: isBrakePressed ? 'scale(0.97)' : 'none',
-                transition: 'background 120ms, box-shadow 120ms, transform 120ms'
-              }}
-            >
-              <span className="serif" style={{ fontSize: 24 }}>
-                Brake
-              </span>
-              <span className="kicker" style={{ fontSize: 8, color: 'inherit', opacity: 0.75 }}>
-                Reverse
-              </span>
-            </button>
-
-            {/* Gas */}
-            <button
-              className="reveal"
-              onTouchStart={() => {
-                throttleRef.current = 1.0;
-                brakeRef.current = 0.0;
-                setIsGasPressed(true);
-                triggerHaptic(20);
-              }}
-              onTouchEnd={() => {
-                throttleRef.current = 0.0;
-                setIsGasPressed(false);
-              }}
-              style={{
-                ...i(4),
-                borderRadius: 'var(--radius)',
-                border: '1px solid rgba(241,216,168,0.45)',
-                background: isGasPressed
-                  ? 'linear-gradient(180deg, #ffd479, #ffc34d 55%, #d9952b)'
-                  : 'linear-gradient(160deg, rgba(241,216,168,0.16), rgba(241,216,168,0.04))',
-                color: isGasPressed ? '#2a1808' : 'var(--gold-pale)',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                boxShadow: isGasPressed ? '0 0 30px rgba(255,195,77,0.6)' : 'none',
-                transform: isGasPressed ? 'scale(0.97)' : 'none',
-                transition: 'background 120ms, box-shadow 120ms, transform 120ms'
-              }}
-            >
-              <span className="serif" style={{ fontSize: 28 }}>
-                Gas
-              </span>
-              <span className="kicker" style={{ fontSize: 8, color: 'inherit', opacity: 0.75 }}>
-                Accelerate
-              </span>
-            </button>
-          </div>
-        </section>
-      </main>
-
-      {/* Rotate hint */}
-      {portrait && !hintDismissed && (
-        <button
-          onClick={() => setHintDismissed(true)}
-          className="glass-light"
-          style={{
-            position: 'absolute',
-            bottom: 18,
-            left: '50%',
-            zIndex: 5,
-            padding: '10px 16px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 12,
-            color: 'var(--gold-pale)',
-            animation: 'toastIn 500ms var(--ease-out) both',
-            cursor: 'pointer'
-          }}
-        >
-          <RotateCw size={14} /> Turn your phone sideways for the best grip · tap to hide
-        </button>
-      )}
-    </div>
+      onInput={(o) => {
+        steerRef.current = o.steer;
+        throttleRef.current = o.throttle;
+        brakeRef.current = o.brake;
+        nitroRef.current = o.nitro;
+      }}
+    />
   );
 };

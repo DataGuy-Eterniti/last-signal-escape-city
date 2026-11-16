@@ -24,7 +24,7 @@ In compliance with the project owner policy, transparent development guidelines,
 
 ### 3. Anthropic Claude
 - **Role**: UI/UX and product design, game-systems design, and code generation.
-- **Scope**: Produced the Gold Noir redesign of all screens and motion, the city-block renderer, the city modes (New York, Lagos Island, Chicago, Gold City), solid obstacles and collisions, traffic, armed checkpoint officers, per-object colour variation, and performance tuning. Code is delivered to the project owner, who reviews, tests and commits it under their own identity. Claude is a tool only and is not listed as a Git contributor, author or `Co-authored-by` entity.
+- **Scope**: Produced the Gold Noir redesign of all screens and motion, the city-block renderer, the city modes (New York, Lagos Island, Chicago, Gold City), solid obstacles and collisions, traffic, armed checkpoint officers, per-object colour variation, and performance tuning. For Gold Noir 2.0 (to the owner's design brief): the 360° phone controller (Classic/Advanced modes, D-pad, left-handed layout), mission selection, Crime City and Zombie Outbreak HUDs, mission results, the icon set and the `/design` review sheet. Code is delivered to the project owner, who reviews, tests and commits it under their own identity. Claude is a tool only and is not listed as a Git contributor, author or `Co-authored-by` entity.
 
 ## Policy & Attribution Rules
 - All code generated or suggested by AI tools undergoes review, testing, and validation by the project owner.

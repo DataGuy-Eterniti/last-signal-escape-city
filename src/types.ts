@@ -39,10 +39,20 @@ export interface VehicleState {
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error';
 
+export interface RttMetrics {
+  current: number;
+  median: number;
+  p95: number;
+  max: number;
+  min: number;
+  samplesCount: number;
+}
+
 export interface RoomConnectionState {
   status: ConnectionStatus;
   roomId: string | null;
   pingMs: number;
+  rttMetrics?: RttMetrics;
   packetsReceived: number;
   lastPacketTime: number;
   errorMessage?: string;
