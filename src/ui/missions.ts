@@ -5,9 +5,9 @@ import type { CityProfile } from '../engine/cities';
    copy all read from here, so adding a mode is a one-entry change.
    ========================================================================== */
 
-export type MissionId = 'courier' | 'crime' | 'zombie';
+export type MissionId = 'courier' | 'crime' | 'zombie' | 'rescue';
 export type Difficulty = 'Easy' | 'Medium' | 'Hard' | 'Extreme';
-export type HazardIcon = 'barricade' | 'traffic' | 'gunman' | 'siren' | 'radio' | 'horde' | 'infected' | 'timer' | 'cargo';
+export type HazardIcon = 'barricade' | 'traffic' | 'gunman' | 'siren' | 'radio' | 'horde' | 'infected' | 'timer' | 'cargo' | 'survivor' | 'seat';
 
 export interface Mission {
   id: MissionId;
@@ -20,7 +20,9 @@ export interface Mission {
   channel: string; // who is talking in the briefing / radio
   accent: string; // CSS colour token
   difficultyStep: number; // added to the city's base difficulty
-  available: boolean; // false = visible but locked ("Coming soon")
+  available: boolean; // false = visible but locked
+  lockLabel?: string; // badge text when locked (default "Coming soon")
+  rescue?: boolean; // shows survivor count, threat estimate and navigation levels
 }
 
 export const MISSIONS: Mission[] = [
@@ -84,6 +86,30 @@ export const MISSIONS: Mission[] = [
     accent: 'var(--toxic)',
     difficultyStep: 2,
     available: false // HUD + briefing designed; zombie actors pending in the engine (see UI_UPGRADE_CHANGES.md)
+  },
+  {
+    id: 'rescue',
+    name: 'Rescue Run',
+    kicker: 'Nobody gets left behind',
+    tagline: 'Survivors are signalling from the kerbs. Pick them up, keep them safe, get them out.',
+    objective: 'Collect stranded survivors, up to three at a time, and drop them at the safe zone before they give up waiting.',
+    hazards: [
+      { icon: 'survivor', label: 'Survivors with limited patience' },
+      { icon: 'seat', label: 'Limited seats: plan your loops' },
+      { icon: 'siren', label: 'Police pursuit while you drive' },
+      { icon: 'traffic', label: 'Traffic & barricades' }
+    ],
+    briefing: [
+      'Control: civilians stranded across the grid, flares lit.',
+      'Stop beside each one. Boarding takes two seconds, so hold steady.',
+      'Every drop-off at the safe zone counts. Lose nobody.'
+    ],
+    channel: 'Rescue control',
+    accent: 'var(--gold)',
+    difficultyStep: 0,
+    available: false, // designed; gameplay wiring pending (UI_UPGRADE_CHANGES.md, Gold Noir 3.0)
+    lockLabel: 'Design preview',
+    rescue: true
   }
 ];
 

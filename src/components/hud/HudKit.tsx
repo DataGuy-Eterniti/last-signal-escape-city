@@ -7,7 +7,7 @@ import { IconCrosshair, IconFlag, IconHorde, IconRadio, IconSiren } from './Icon
    everything arrives through props (see ui/hudModel.ts).
    ========================================================================== */
 
-export const fmtDist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.max(0, Math.round(m / 10) * 10)} m`);
+export const fmtDist = (m: number) => (!Number.isFinite(m) ? '— m' : m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.max(0, Math.round(m / 10) * 10)} m`);
 export const fmtClock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`;
 
 export const toneFor = (v: number) => (v > 60 ? 'var(--gold)' : v > 30 ? '#e9a06a' : 'var(--ember)');
@@ -238,7 +238,7 @@ export const AlertBanner: React.FC<{
       </span>
       <div>
         <div style={{ fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 12, letterSpacing: '0.28em', textTransform: 'uppercase' }}>{title}</div>
-        {detail && <div style={{ fontSize: 11, color: 'var(--gold-pale)', marginTop: 2 }}>{detail}</div>}
+        {detail && <div className="hud-hide-compact" style={{ fontSize: 11, color: 'var(--gold-pale)', marginTop: 2 }}>{detail}</div>}
       </div>
     </div>
   );

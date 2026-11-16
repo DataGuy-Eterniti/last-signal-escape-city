@@ -635,7 +635,10 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
                   busted: 'You stopped too close to the law. Cuffs on, cargo seized.',
                   extracted: `The evac lifted off with you aboard.`,
                   overrun: 'The horde closed in before you reached the evac.',
-                  'evac-missed': 'The last airlift left without you.'
+                  'evac-missed': 'The last airlift left without you.',
+                  'rescue-complete': 'Every survivor reached the safe zone.',
+                  'rescue-partial': 'Some made it out. The city will remember the rest.',
+                  'rescue-failed': 'Nobody reached the safe zone tonight.'
                 }[result.outcome]
               }
               note={result.newBest ? 'New best time' : !mission || mission.id === 'courier' ? (result.best !== null && phase === 'won' ? `Best ${fmtTime(result.best)}` : undefined) : undefined}

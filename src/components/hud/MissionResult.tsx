@@ -3,14 +3,14 @@ import { RotateCcw, Map as MapIcon, Swords } from 'lucide-react';
 import { Letters } from '../Ornaments';
 import type { MissionId } from '../../ui/missions';
 import { fmtClock } from './HudKit';
-import { IconBadge, IconBiohazard, IconCargo, IconCourier, IconFlag, IconSiren, IconWrench } from './Icons';
+import { IconBadge, IconBiohazard, IconCargo, IconCourier, IconFlag, IconLost, IconSafeZone, IconSiren, IconSurvivor, IconTrophy, IconWrench } from './Icons';
 
 /* ==========================================================================
    Mission results — one card, three moods. Success keeps the gold rays;
    failure dims them and tints the card with the mode's danger accent.
    ========================================================================== */
 
-export type Outcome = 'escaped' | 'package-lost' | 'wrecked' | 'busted' | 'extracted' | 'overrun' | 'evac-missed';
+export type Outcome = 'escaped' | 'package-lost' | 'wrecked' | 'busted' | 'extracted' | 'overrun' | 'evac-missed' | 'rescue-complete' | 'rescue-partial' | 'rescue-failed';
 
 const COPY: Record<Outcome, { title: string; kicker: string; win: boolean }> = {
   escaped: { title: 'Escaped', kicker: 'Extraction reached', win: true },
@@ -19,13 +19,16 @@ const COPY: Record<Outcome, { title: string; kicker: string; win: boolean }> = {
   busted: { title: 'Busted', kicker: 'Pursuit ended', win: false },
   extracted: { title: 'Extracted', kicker: 'Evac reached', win: true },
   overrun: { title: 'Overrun', kicker: 'The horde caught up', win: false },
-  'evac-missed': { title: 'Evac missed', kicker: 'The airlift has left', win: false }
+  'evac-missed': { title: 'Evac missed', kicker: 'The airlift has left', win: false },
+  'rescue-complete': { title: 'All saved', kicker: 'Nobody left behind', win: true },
+  'rescue-partial': { title: 'Rescue complete', kicker: 'Survivors delivered', win: true },
+  'rescue-failed': { title: 'No survivors', kicker: 'The streets went quiet', win: false }
 };
 
 export interface ResultStat {
   label: string;
   value: string;
-  icon?: 'time' | 'cargo' | 'vehicle' | 'heat' | 'threat' | 'flag';
+  icon?: 'time' | 'cargo' | 'vehicle' | 'heat' | 'threat' | 'flag' | 'survivor' | 'safe' | 'lost';
   highlight?: boolean;
 }
 
@@ -41,6 +44,12 @@ const StatIcon: React.FC<{ icon?: ResultStat['icon'] }> = ({ icon }) => {
       return <IconBiohazard size={15} />;
     case 'flag':
       return <IconFlag size={15} />;
+    case 'survivor':
+      return <IconSurvivor size={15} />;
+    case 'safe':
+      return <IconSafeZone size={15} />;
+    case 'lost':
+      return <IconLost size={15} />;
     default:
       return <IconCourier size={15} />;
   }
@@ -54,10 +63,11 @@ export const MissionResult: React.FC<{
   time: number;
   stats: ResultStat[];
   note?: string; // e.g. "New best time"
+  score?: { total: number; parts: { label: string; value: number }[] }; // Rescue Run
   onRetry: () => void;
   onMission: () => void;
   onCity: () => void;
-}> = ({ mode, outcome, cityName, line, time, stats, note, onRetry, onMission, onCity }) => {
+}> = ({ mode, outcome, cityName, line, time, stats, note, score, onRetry, onMission, onCity }) => {
   const c = COPY[outcome];
   const accent = mode === 'crime' ? 'var(--ember)' : mode === 'zombie' ? 'var(--toxic)' : 'var(--gold)';
   const i = (n: number) => ({ ['--i' as string]: n } as React.CSSProperties);
@@ -86,7 +96,7 @@ export const MissionResult: React.FC<{
         style={{ ...i(0), position: 'relative', padding: '36px clamp(22px, 5vw, 48px)', textAlign: 'center', maxWidth: 560, width: '100%', borderColor: c.win ? 'var(--line-strong)' : accent }}
       >
         <span className="kicker reveal" style={{ ...i(1), color: c.win ? undefined : accent, display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-          {mode === 'crime' ? <IconSiren size={13} /> : mode === 'zombie' ? <IconBiohazard size={13} /> : <IconCourier size={13} />}
+          {mode === 'crime' ? <IconSiren size={13} /> : mode === 'zombie' ? <IconBiohazard size={13} /> : mode === 'rescue' ? <IconSurvivor size={13} /> : <IconCourier size={13} />}
           {cityName} · {c.kicker}
         </span>
         <h2 className="serif gold-text" style={{ fontSize: 'clamp(46px, 8vw, 64px)', fontWeight: 400, lineHeight: 1, margin: '14px 0 10px' }}>
@@ -102,6 +112,32 @@ export const MissionResult: React.FC<{
             <Stat key={s.label} stat={s} accent={accent} />
           ))}
         </div>
+        {score && (
+          <div className="reveal" style={{ ...i(6), margin: '16px 0 0', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 18px', alignItems: 'center', textAlign: 'left', borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+            <div style={{ gridRow: `span ${score.parts.length}`, display: 'grid', justifyItems: 'center', gap: 4, paddingRight: 18, borderRight: '1px solid var(--line)' }}>
+              <span style={{ color: 'var(--gold)' }}>
+                <IconTrophy size={22} />
+              </span>
+              <span className="serif num" style={{ fontSize: 34, color: 'var(--gold)', lineHeight: 1 }}>
+                {score.total.toLocaleString()}
+              </span>
+              <span className="hud-label" style={{ fontSize: 7 }}>
+                Score
+              </span>
+            </div>
+            {score.parts
+              .filter((p) => p.value !== 0)
+              .map((p) => (
+                <div key={p.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: p.value < 0 ? 'var(--ember)' : 'var(--gold-pale)' }}>
+                  <span>{p.label}</span>
+                  <span className="num">
+                    {p.value > 0 ? '+' : ''}
+                    {p.value.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+          </div>
+        )}
         {note && (
           <p className="kicker reveal num" style={{ ...i(6), marginTop: 12, color: 'var(--gold)' }}>
             {note}

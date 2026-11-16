@@ -170,3 +170,56 @@ export const IconMirror: React.FC<P> = (p) => (
     <path d="M9 7 4 12l5 5M15 7l5 5-5 5" />
   </Svg>
 );
+
+/* ---------- Gold Noir 3.0 · Rescue Run ---------- */
+
+/** Survivor: person with a raised, waving arm. */
+export const IconSurvivor: React.FC<P> = (p) => (
+  <Svg {...p}>
+    <circle cx="10" cy="5" r="2.4" />
+    <path d="M10 8.5v6.5M10 15l-3 6M10 15l3 6M10 10.5 6 13" />
+    <path d="m10 10.5 4.5-3.5 2-4" />
+    <path d="M19 2.5v2M21.5 4.5h-2M17.6 6.4l-1.2 1.2" />
+  </Svg>
+);
+
+/** Passenger seat (capacity). */
+export const IconSeat: React.FC<P> = ({ filled, ...p }) => (
+  <Svg {...p}>
+    <path d="M7 4h6a2 2 0 0 1 2 2v7H7V4Z" fill={filled ? 'currentColor' : 'none'} />
+    <path d="M5 13h12a2 2 0 0 1 2 2v2H5v-4ZM7 17v3M17 17v3" fill={filled ? 'currentColor' : 'none'} />
+  </Svg>
+);
+
+/** Safe zone: shield ring with a house. */
+export const IconSafeZone: React.FC<P> = (p) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9.5" strokeDasharray="3 2.5" />
+    <path d="M7.5 12.5 12 8.5l4.5 4V17h-9v-4.5Z" />
+    <path d="M10.5 17v-2.5h3V17" />
+  </Svg>
+);
+
+/** Navigation assistance: compass. */
+export const IconCompass: React.FC<P> = (p) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" />
+  </Svg>
+);
+
+/** Score / trophy. */
+export const IconTrophy: React.FC<P> = (p) => (
+  <Svg {...p}>
+    <path d="M8 4h8v5a4 4 0 0 1-8 0V4Z" />
+    <path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20.5h7M9.5 17h5v3.5h-5z" />
+  </Svg>
+);
+
+/** Lost / missed survivor. */
+export const IconLost: React.FC<P> = (p) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m8.5 8.5 7 7M15.5 8.5l-7 7" />
+  </Svg>
+);

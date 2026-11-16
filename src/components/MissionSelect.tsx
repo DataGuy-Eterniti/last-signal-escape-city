@@ -3,7 +3,8 @@ import { ArrowLeft, ArrowRight, QrCode, Lock } from 'lucide-react';
 import type { CityProfile } from '../engine/cities';
 import { HazardIcon, MISSIONS, Mission, difficultyRank, missionDifficulty } from '../ui/missions';
 import { GoldBackdrop, Letters } from './Ornaments';
-import { IconBiohazard, IconCargo, IconCourier, IconCrosshair, IconHorde, IconInfected, IconRadio, IconSiren, IconTimer } from './hud/Icons';
+import { IconBiohazard, IconCargo, IconCompass, IconCourier, IconCrosshair, IconHorde, IconInfected, IconRadio, IconSeat, IconSiren, IconSurvivor, IconTimer } from './hud/Icons';
+import { NAV_LEVELS, NavLevel, RESCUE_CONFIG, estimateThreat } from '../ui/rescue/rescueModel';
 import { readBest, fmtTime } from './CitySelect';
 
 /* ==========================================================================
@@ -39,11 +40,77 @@ export const HazardGlyph: React.FC<{ icon: HazardIcon; size?: number }> = ({ ico
       return <IconTimer size={size} />;
     case 'cargo':
       return <IconCargo size={size} />;
+    case 'survivor':
+      return <IconSurvivor size={size} />;
+    case 'seat':
+      return <IconSeat size={size} />;
   }
 };
 
 const Emblem: React.FC<{ mission: Mission; size?: number }> = ({ mission, size = 40 }) =>
-  mission.id === 'crime' ? <IconSiren size={size} /> : mission.id === 'zombie' ? <IconBiohazard size={size} /> : <IconCourier size={size} />;
+  mission.id === 'crime' ? <IconSiren size={size} /> : mission.id === 'zombie' ? <IconBiohazard size={size} /> : mission.id === 'rescue' ? <IconSurvivor size={size} /> : <IconCourier size={size} />;
+
+/** Survivor count + estimated threat, shown on the Rescue card and briefing. */
+export const RescueStats: React.FC<{ city: CityProfile; mission: Mission; compact?: boolean }> = ({ city, mission, compact }) => {
+  const d = missionDifficulty(mission, city);
+  const cfg = RESCUE_CONFIG[d];
+  const threat = estimateThreat(d, city.checkpoints);
+  return (
+    <div style={{ display: 'flex', gap: compact ? 14 : 22, flexWrap: 'wrap', alignItems: 'center', fontSize: 11, color: 'var(--gold-pale)' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} aria-label={`${cfg.survivors} survivors`}>
+        <span style={{ color: '#fff6e4' }}>
+          <IconSurvivor size={14} />
+        </span>
+        <strong className="num" style={{ color: 'var(--cream)', fontWeight: 600 }}>{cfg.survivors}</strong> survivors
+      </span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} aria-label={`${cfg.capacity} seats`}>
+        <span style={{ color: 'var(--gold)' }}>
+          <IconSeat size={14} />
+        </span>
+        <strong className="num" style={{ color: 'var(--cream)', fontWeight: 600 }}>{cfg.capacity}</strong> seats
+      </span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} aria-label={`Estimated threat ${threat} of 5`}>
+        Threat
+        <span style={{ display: 'inline-flex', gap: 2 }}>
+          {[1, 2, 3, 4, 5].map((k) => (
+            <span key={k} style={{ width: 6, height: 6, borderRadius: '50%', background: k <= threat ? (threat >= 4 ? 'var(--ember)' : '#e9a06a') : 'rgba(241,216,168,0.15)' }} />
+          ))}
+        </span>
+      </span>
+    </div>
+  );
+};
+
+/** Guided / Explorer / Survival selector. */
+export const NavLevelPicker: React.FC<{ value: NavLevel; onChange: (n: NavLevel) => void }> = ({ value, onChange }) => (
+  <div role="radiogroup" aria-label="Navigation assistance" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+    {(['guided', 'explorer', 'survival'] as NavLevel[]).map((n) => {
+      const on = n === value;
+      return (
+        <button
+          key={n}
+          role="radio"
+          aria-checked={on}
+          title={NAV_LEVELS[n].blurb}
+          onClick={(e) => {
+            e.stopPropagation();
+            onChange(n);
+          }}
+          style={{ padding: '8px 6px', borderRadius: 10, border: `1px solid ${on ? 'var(--gold)' : 'var(--line)'}`, background: on ? 'rgba(255,195,77,0.1)' : 'rgba(255,255,255,0.02)', color: on ? 'var(--cream)' : 'var(--gold-pale)', cursor: 'pointer', textAlign: 'center' }}
+        >
+          <div className="serif" style={{ fontSize: 16 }}>
+            {NAV_LEVELS[n].label}
+          </div>
+          {n === 'explorer' && (
+            <div className="kicker" style={{ fontSize: 7, color: 'var(--gold)', marginTop: 2 }}>
+              Default
+            </div>
+          )}
+        </button>
+      );
+    })}
+  </div>
+);
 
 /** Lightweight card art: gradients + one emblem, no images. */
 const CardArt: React.FC<{ mission: Mission; on: boolean }> = ({ mission, on }) => {
@@ -52,6 +119,8 @@ const CardArt: React.FC<{ mission: Mission; on: boolean }> = ({ mission, on }) =
       ? 'radial-gradient(60% 90% at 15% 30%, rgba(224,88,58,0.35), transparent 70%), radial-gradient(60% 90% at 85% 70%, rgba(122,162,255,0.28), transparent 70%), #140c06'
       : mission.id === 'zombie'
         ? 'radial-gradient(70% 100% at 50% 100%, rgba(111,138,46,0.42), transparent 70%), #110d05'
+        : mission.id === 'rescue'
+          ? 'radial-gradient(30% 45% at 30% 40%, rgba(255,246,228,0.30), transparent 70%), radial-gradient(28% 40% at 72% 62%, rgba(255,246,228,0.22), transparent 70%), radial-gradient(70% 100% at 50% 0%, rgba(255,195,77,0.22), transparent 70%), #140c06'
         : 'radial-gradient(70% 100% at 50% 0%, rgba(255,195,77,0.28), transparent 70%), #140c06';
   return (
     <div
@@ -95,12 +164,14 @@ export const DifficultyBars: React.FC<{ rank: number; color: string; label: stri
 
 export const MissionSelect: React.FC<{
   city: CityProfile;
-  onPick: (m: Mission) => void;
+  onPick: (m: Mission, opts?: { nav: NavLevel }) => void;
   onBack: () => void;
   onPair: () => void;
   phoneLinked: boolean;
-}> = ({ city, onPick, onBack, onPair, phoneLinked }) => {
-  const [active, setActive] = useState(0);
+  initialMission?: Mission['id']; // design preview: open with a given card selected
+}> = ({ city, onPick, onBack, onPair, phoneLinked, initialMission }) => {
+  const [active, setActive] = useState(() => Math.max(0, MISSIONS.findIndex((x) => x.id === initialMission)));
+  const [nav, setNav] = useState<NavLevel>('explorer');
   const m = MISSIONS[active];
   const diff = missionDifficulty(m, city);
   const best = readBest(city.id);
@@ -109,12 +180,12 @@ export const MissionSelect: React.FC<{
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'ArrowRight' || e.code === 'KeyD') setActive((a) => (a + 1) % MISSIONS.length);
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') setActive((a) => (a - 1 + MISSIONS.length) % MISSIONS.length);
-      if (e.code === 'Enter' && MISSIONS[active].available) onPick(MISSIONS[active]);
+      if (e.code === 'Enter' && MISSIONS[active].available) onPick(MISSIONS[active], MISSIONS[active].rescue ? { nav } : undefined);
       if (e.code === 'Escape') onBack();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, onPick, onBack]);
+  }, [active, onPick, onBack, nav]);
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', zIndex: 60 }}>
@@ -152,7 +223,7 @@ export const MissionSelect: React.FC<{
 
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.55fr) minmax(280px, 1fr)', gap: 20, alignItems: 'start' }} className="mission-layout">
           {/* Mode cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16 }} role="radiogroup" aria-label="Mission mode">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 16 }} role="radiogroup" aria-label="Mission mode">
             {MISSIONS.map((mm, idx) => {
               const on = idx === active;
               const d = missionDifficulty(mm, city);
@@ -180,7 +251,7 @@ export const MissionSelect: React.FC<{
                 >
                   {!mm.available && (
                     <span className="kicker" style={{ position: 'absolute', top: 24, right: 24, zIndex: 2, fontSize: 8, display: 'flex', gap: 5, alignItems: 'center', color: 'var(--cream)', background: 'rgba(13,8,4,0.8)', padding: '5px 9px', borderRadius: 999, border: '1px solid var(--line)' }}>
-                      <Lock size={10} /> Coming soon
+                      <Lock size={10} /> {mm.lockLabel ?? 'Coming soon'}
                     </span>
                   )}
                   <CardArt mission={mm} on={on} />
@@ -194,6 +265,11 @@ export const MissionSelect: React.FC<{
                   <div style={{ marginTop: 12 }}>
                     <DifficultyBars rank={difficultyRank(d)} color={mm.accent} label={d} />
                   </div>
+                  {mm.rescue && (
+                    <div style={{ marginTop: 10 }}>
+                      <RescueStats city={city} mission={mm} compact />
+                    </div>
+                  )}
                 </button>
               );
             })}
@@ -248,6 +324,18 @@ export const MissionSelect: React.FC<{
                 )}
               </div>
 
+              {m.rescue && (
+                <div style={{ marginBottom: 18, display: 'grid', gap: 12 }}>
+                  <RescueStats city={city} mission={m} />
+                  <div>
+                    <div className="hud-label" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <IconCompass size={12} /> Navigation assistance
+                    </div>
+                    <NavLevelPicker value={nav} onChange={setNav} />
+                    <p style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.45, marginTop: 6, minHeight: 32 }}>{NAV_LEVELS[nav].blurb}</p>
+                  </div>
+                </div>
+              )}
               <div className="hud-label" style={{ marginBottom: 8 }}>
                 Hazards
               </div>
@@ -273,14 +361,14 @@ export const MissionSelect: React.FC<{
                 ))}
               </div>
 
-              <button className="btn btn-gold" disabled={!m.available} onClick={() => onPick(m)} style={{ width: '100%', opacity: m.available ? 1 : 0.5, cursor: m.available ? 'pointer' : 'not-allowed' }}>
+              <button className="btn btn-gold" disabled={!m.available} onClick={() => onPick(m, m.rescue ? { nav } : undefined)} style={{ width: '100%', opacity: m.available ? 1 : 0.5, cursor: m.available ? 'pointer' : 'not-allowed' }}>
                 {m.available ? (
                   <>
                     Begin mission <ArrowRight size={16} className="btn-arrow" />
                   </>
                 ) : (
                   <>
-                    <Lock size={15} /> Coming soon
+                    <Lock size={15} /> {m.lockLabel ?? 'Coming soon'}
                   </>
                 )}
               </button>
