@@ -9,11 +9,11 @@ import { BODY_SIZE, BuildingPaint, CarBody, buildingPaint, carBody, paintFor } f
    ========================================================================== */
 
 export const PITCH = 500; // road centreline spacing (px)
-export const ROAD = 160; // asphalt width
+export const ROAD = 210; // asphalt width
 export const HR = ROAD / 2;
-export const SIDEWALK = 16;
-export const INNER = PITCH - ROAD; // 340: block incl. sidewalk
-export const LOT = INNER - SIDEWALK * 2; // 308: buildable
+export const SIDEWALK = 18;
+export const INNER = PITCH - ROAD; // 290: block incl. sidewalk
+export const LOT = INNER - SIDEWALK * 2; // 254: buildable
 export const OFFSET = 220; // road 0 centre sits here (physics clamps at 50 px)
 export const METERS_PER_PX = 0.1;
 
@@ -230,7 +230,7 @@ export function buildWorld(city: CityProfile): World {
     parkedCars: [],
     closed: new Set(),
     cones: [],
-    start: { x: roadX(city.start.ix), y: roadY(city.start.iy), angle: -Math.PI / 2 },
+    start: { x: roadX(city.start.ix), y: roadY(city.start.iy), angle: city.start.heading ?? -Math.PI / 2 },
     extraction: { x: roadX(city.extraction.ix), y: roadY(city.extraction.iy), name: city.extraction.name },
     landmarkLabels: []
   };
@@ -342,7 +342,7 @@ export function buildWorld(city: CityProfile): World {
     const mx = (roadX(s.a[0]) + roadX(s.b[0])) / 2;
     const my = (roadY(s.a[1]) + roadY(s.b[1])) / 2;
     for (const side of [-1, 1]) {
-      for (const lane of [-40, 0, 40]) {
+      for (const lane of [-55, 0, 55]) {
         const c = vertical ? { x: mx + lane - 5, y: my + side * 46 - 5, w: 10, h: 10 } : { x: mx + side * 46 - 5, y: my + lane - 5, w: 10, h: 10 };
         world.cones.push(c);
         add({ ...c, kind: 'cone' });
@@ -367,9 +367,10 @@ export function buildWorld(city: CityProfile): World {
       const body = carBody(seed, city.id, false);
       const [bw, bl] = BODY_SIZE[body];
       const color = paintFor(body, seed, city.id);
+      const carCenter = curbSide * (HR - 18);
       const car: ParkedCar = vertical
-        ? { x: roadX(s.a[0]) + curbSide * (HR - 16) - bw / 2, y: along, w: bw, h: bl, angle: 0, body, color, seed }
-        : { x: along, y: roadY(s.a[1]) + curbSide * (HR - 16) - bw / 2, w: bl, h: bw, angle: 1, body, color, seed };
+        ? { x: roadX(s.a[0]) + carCenter - bw / 2, y: along, w: bw, h: bl, angle: 0, body, color, seed }
+        : { x: along, y: roadY(s.a[1]) + carCenter - bw / 2, w: bl, h: bw, angle: 1, body, color, seed };
       world.parkedCars.push(car);
       add({ x: car.x, y: car.y, w: car.w, h: car.h, kind: 'car' });
     }
@@ -445,6 +446,8 @@ export function collide(world: World, v: VehicleState): CollisionResult {
   let hit: ObstacleKind | null = null;
   const ax = Math.cos(v.angle) * CAR_AXLE;
   const ay = Math.sin(v.angle) * CAR_AXLE;
+  let lastNx = 0;
+  let lastNy = 0;
 
   for (let pass = 0; pass < 2; pass++) {
     for (const side of [1, -1]) {
@@ -481,8 +484,10 @@ export function collide(world: World, v: VehicleState): CollisionResult {
         y += ny * pen;
         const vn = vx * nx + vy * ny;
         if (vn < 0) {
-          vx -= vn * nx * 1.25; // 0.25 restitution
-          vy -= vn * ny * 1.25;
+          vx -= vn * nx * 1.15; // 0.15 restitution
+          vy -= vn * ny * 1.15;
+          lastNx = nx;
+          lastNy = ny;
           if (-vn > impact) {
             impact = -vn;
             hit = o.kind;
@@ -494,19 +499,42 @@ export function collide(world: World, v: VehicleState): CollisionResult {
 
   if (impact === 0 && x === v.x && y === v.y) return { vehicle: v, impact: 0, hit: null };
 
-  // project the remaining velocity back onto the heading (physics uses speed + angle)
-  const along = vx * Math.cos(v.angle) + vy * Math.sin(v.angle);
-  const scrape = impact > 0 ? 0.92 : 1;
-  const next: VehicleState = { ...v, x, y, speed: along * scrape };
-  next.vx = Math.cos(next.angle) * next.speed;
-  next.vy = Math.sin(next.angle) * next.speed;
+  // Deflect angle along the sliding tangent so vehicle does not stick into walls
+  let nextAngle = v.angle;
+  if (lastNx !== 0 || lastNy !== 0) {
+    const headingIntoNormal = Math.cos(v.angle) * lastNx + Math.sin(v.angle) * lastNy;
+    if (headingIntoNormal < 0) {
+      const targetAngle = Math.atan2(
+        Math.sin(v.angle) - headingIntoNormal * lastNy,
+        Math.cos(v.angle) - headingIntoNormal * lastNx
+      );
+      let diff = targetAngle - v.angle;
+      while (diff > Math.PI) diff -= 2 * Math.PI;
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      nextAngle = v.angle + diff * 0.35;
+    }
+  }
+
+  // project the remaining velocity back onto the deflected heading
+  const along = vx * Math.cos(nextAngle) + vy * Math.sin(nextAngle);
+  const scrape = impact > 0 ? 0.94 : 1;
+  const speed = Math.max(0, along * scrape);
+  const next: VehicleState = {
+    ...v,
+    x,
+    y,
+    angle: nextAngle,
+    speed,
+    vx: Math.cos(nextAngle) * speed,
+    vy: Math.sin(nextAngle) * speed
+  };
   return { vehicle: next, impact, hit };
 }
 
 /** Damage to the package from an impact (px/s closing speed). */
 export function damageFrom(impact: number, hit: ObstacleKind | null): number {
-  if (impact < 80) return 0;
+  if (impact < 100) return 0;
   if (hit === 'officer') return 0;
-  const soft = hit === 'cone' ? 0.25 : hit === 'traffic' ? 0.8 : 1;
-  return Math.min(45, ((impact - 80) / 11) * soft);
+  const soft = hit === 'cone' ? 0.2 : hit === 'traffic' ? 0.7 : 1;
+  return Math.min(40, ((impact - 100) / 12) * soft);
 }

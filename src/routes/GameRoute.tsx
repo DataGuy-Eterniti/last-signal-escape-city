@@ -137,6 +137,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
   const routeRef = useRef<{ x: number; y: number }[]>([]);
   const guidanceRef = useRef(true); // G toggles the route ribbon
   const lastFireToastRef = useRef(0);
+  const lastDamageTimeRef = useRef(0);
 
   // Adaptive resolution (keeps 60 FPS on integrated GPUs)
   const scaleRef = useRef(Math.min(window.devicePixelRatio || 1, 1));
@@ -147,6 +148,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
     v.angle = w.start.angle;
     vehicleRef.current = v;
     integrityRef.current = 100;
+    lastDamageTimeRef.current = 0;
     elapsedRef.current = 0;
     shakeRef.current = 0;
     districtRef.current = '';
@@ -313,7 +315,8 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
           vehicleRef.current = tr.vehicle;
           for (const hit of [res, tr]) {
             const dmg = damageFrom(hit.impact, hit.hit);
-            if (dmg > 0) {
+            if (dmg > 0 && now - lastDamageTimeRef.current >= 250) {
+              lastDamageTimeRef.current = now;
               crashDamage += dmg;
               if (hit.hit === 'traffic' && !heatEvents.includes('traffic-crash')) heatEvents.push('traffic-crash');
               integrityRef.current = Math.max(0, integrityRef.current - dmg);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CITIES } from '../engine/cities';
-import { buildWorld, collide, damageFrom, isReachable, pointBlocked, CAR_RADIUS, OFFSET, PITCH, roadX, roadY } from '../engine/world';
+import { buildWorld, collide, damageFrom, isReachable, pointBlocked, CAR_RADIUS, HR, OFFSET, PITCH, roadX, roadY } from '../engine/world';
 import { createInitialVehicle } from '../engine/physics';
 
 describe('City worlds', () => {
@@ -63,13 +63,13 @@ describe('Collisions', () => {
   });
 
   it('gentle scrapes do no damage', () => {
-    expect(damageFrom(40, 'building')).toBe(0);
+    expect(damageFrom(60, 'building')).toBe(0);
     expect(damageFrom(400, 'cone')).toBeLessThan(damageFrom(400, 'building'));
   });
 
   it('has a solid lockdown barrier around the city', () => {
     const w = buildWorld(CITIES[1]);
-    expect(pointBlocked(w, OFFSET - 80 - 34, OFFSET + PITCH, 1)).toBe(true);
-    expect(pointBlocked(w, OFFSET - 80 + 20, OFFSET + PITCH, 1)).toBe(false);
+    expect(pointBlocked(w, OFFSET - HR - 34, OFFSET + PITCH, 1)).toBe(true);
+    expect(pointBlocked(w, OFFSET - HR + 20, OFFSET + PITCH, 1)).toBe(false);
   });
 });

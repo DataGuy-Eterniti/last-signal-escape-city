@@ -7,6 +7,7 @@ import {
   HR,
   INNER,
   ObstacleKind,
+  PITCH,
   World,
   hash,
   nearby,
@@ -27,7 +28,7 @@ import {
    dodged; buildings block line of sight and bullets.
    ========================================================================== */
 
-export const LANE = 38; // lane centre offset from the road centreline
+export const LANE = 48; // lane centre offset from the road centreline (scaled for ROAD=210)
 const STOP = HR + 22; // stop line distance before a junction centre
 const CLEAR = HR + 14; // a car has left the junction after this distance
 
@@ -182,7 +183,7 @@ export function createActors(world: World): Actors {
     const flip = hash(g.a[0], g.a[1], 307) < 0.5;
     const a = flip ? g.b : g.a;
     const b = flip ? g.a : g.b;
-    const t = STOP - 10 + hash(g.b[0], g.b[1], 311) * (500 - STOP * 2);
+    const t = STOP - 10 + hash(g.b[0], g.b[1], 311) * (PITCH - STOP * 2);
     const seed = Math.floor(hash(city.seed, id, 313) * 1e9);
     const body = carBody(seed, city.id, true);
     const [w, len] = BODY_SIZE[body];
@@ -190,7 +191,7 @@ export function createActors(world: World): Actors {
       id: id++,
       a,
       b,
-      t: Math.max(CLEAR + 4, Math.min(500 - STOP - 4, t)),
+      t: Math.max(CLEAR + 4, Math.min(PITCH - STOP - 4, t)),
       speed: 0,
       cruise: 120 + hash(seed, 1, 317) * 70,
       x: 0,
