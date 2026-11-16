@@ -179,8 +179,8 @@ export const CITIES: CityProfile[] = [
     water: [{ edge: 'south', name: 'Amber Bay' }],
     start: { ix: 3, iy: 3, label: 'Amber St & Market St', heading: Math.PI / 2 },
     extraction: { ix: 7, iy: 7, name: 'Harbor Gate' },
-    checkpoints: 3,
-    parkedCarDensity: 0.2,
+    checkpoints: 2,
+    parkedCarDensity: 0.15,
     seed: 77
   }
 ];

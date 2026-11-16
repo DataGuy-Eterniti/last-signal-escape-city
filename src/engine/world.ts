@@ -517,7 +517,7 @@ export function collide(world: World, v: VehicleState): CollisionResult {
 
   // project the remaining velocity back onto the deflected heading
   const along = vx * Math.cos(nextAngle) + vy * Math.sin(nextAngle);
-  const scrape = impact > 0 ? 0.94 : 1;
+  const scrape = impact > 0 ? (world.city.id === 'gold' ? 0.96 : 0.94) : 1;
   const speed = Math.max(0, along * scrape);
   const next: VehicleState = {
     ...v,
@@ -532,9 +532,11 @@ export function collide(world: World, v: VehicleState): CollisionResult {
 }
 
 /** Damage to the package from an impact (px/s closing speed). */
-export function damageFrom(impact: number, hit: ObstacleKind | null): number {
-  if (impact < 100) return 0;
+export function damageFrom(impact: number, hit: ObstacleKind | null, cityId?: string): number {
+  const threshold = cityId === 'gold' ? 120 : 100;
+  if (impact < threshold) return 0;
   if (hit === 'officer') return 0;
   const soft = hit === 'cone' ? 0.2 : hit === 'traffic' ? 0.7 : 1;
-  return Math.min(40, ((impact - 100) / 12) * soft);
+  const factor = cityId === 'gold' ? 14 : 12;
+  return Math.min(40, ((impact - threshold) / factor) * soft);
 }

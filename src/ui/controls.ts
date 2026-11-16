@@ -22,7 +22,7 @@ export interface Vec {
   y: number; // -1 (back) … 1 (forward)
 }
 
-export const DEADZONE = 0.12;
+export const DEADZONE = 0.15;
 
 /**
  * Pointer offset (px, screen space: +y is down) → normalised stick vector,
@@ -45,7 +45,7 @@ export function stickVector(dx: number, dy: number, radius: number): Vec & { mag
 }
 
 /** Gentle expo curve: fine control near centre, full lock at the rim. */
-export const expo = (v: number, k = 0.35) => Math.sign(v) * (Math.abs(v) * (1 - k) + Math.abs(v) ** 3 * k);
+export const expo = (v: number, k = 0.4) => Math.sign(v) * (Math.abs(v) * (1 - k) + Math.abs(v) ** 3 * k);
 
 export interface DpadState {
   up: boolean;
@@ -84,12 +84,24 @@ export interface Pedals {
  *   pedals are hidden and ignored.
  */
 export function mapControls(settings: ControlSettings, v: Vec, pedals: Pedals): { steer: number; throttle: number; brake: number } {
-  const steer = clamp(expo(v.x));
+  const steer = clamp(expo(v.x, 0.4));
   const fwd = Math.max(0, v.y);
   const back = Math.max(0, -v.y);
   if (settings.mode === 'advanced') return { steer, throttle: round(fwd), brake: round(back) };
-  const throttle = pedals.brake ? 0 : Math.max(pedals.gas ? 1 : 0, fwd);
-  const brake = Math.max(pedals.brake ? 1 : 0, back);
+  // Classic mode: pedals have priority. Brake pedal overrides gas pedal for safety.
+  // When gas pedal is held and brake pedal is not, stick thumb arc cannot trigger stick braking.
+  let throttle = 0;
+  let brake = 0;
+  if (pedals.brake) {
+    brake = 1;
+    throttle = 0;
+  } else if (pedals.gas) {
+    throttle = 1;
+    brake = 0;
+  } else {
+    throttle = fwd;
+    brake = back;
+  }
   return { steer, throttle: round(throttle), brake: round(brake) };
 }
 

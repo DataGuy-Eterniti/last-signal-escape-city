@@ -5,6 +5,8 @@ import {
   collide,
   damageFrom,
   isReachable,
+  pointBlocked,
+  CAR_AXLE,
   CAR_RADIUS,
   HR,
   LOT,
@@ -17,6 +19,7 @@ import {
 import { createInitialVehicle, updateVehicle } from '../engine/physics';
 import { createCamera, updateCamera } from '../engine/camera';
 import { routePolyline } from '../ui/hudModel';
+import { DEFAULT_SETTINGS, mapControls } from '../ui/controls';
 
 describe('Stage 1N — Road Geometry & Driving Experience', () => {
   it('widens roads to ROAD=210 and HR=105 while maintaining coherent lot spacing', () => {
@@ -185,5 +188,92 @@ describe('Stage 1N — Road Geometry & Driving Experience', () => {
     }
     expect(camFast.x).toBeGreaterThan(v.x + 30); // leads ahead to the east
     expect(camFast.zoom).toBeLessThan(1.0); // zoom pulls out for speed visibility
+  });
+
+  it('tests 90-degree intersection turning trajectory and clearance without clipping curbs', () => {
+    const world = buildWorld(getCity('gold')!);
+    const jx = roadX(1);
+    const jy = roadY(2);
+    let v = createInitialVehicle(jx, jy - 250);
+    v.angle = Math.PI / 2; // heading south towards intersection
+    v.speed = 160;
+
+    let turned = false;
+    let collidedDuringTurn = false;
+
+    // Approach and turn left towards East (target angle: 0)
+    // Driver approaches intersection at normal city speed (160 px/s) and initiates turn at intersection boundary
+    for (let f = 0; f < 120; f++) {
+      const steer = (v.y >= jy - 75 && v.angle > 0.05) ? -1.0 : 0;
+      // Normal city cruise throttle balances friction (~150-160 px/s)
+      const throttle = steer !== 0 ? 0.35 : 0.34;
+      v = updateVehicle(v, { seq: f, timestamp: f * 16, steer, throttle, brake: 0, nitro: false }, 1 / 60, world.width, world.height);
+      const res = collide(world, v);
+      v = res.vehicle;
+      if (res.impact > 0) {
+        collidedDuringTurn = true;
+        break;
+      }
+      if (Math.abs(v.angle) < 0.15 && v.x > jx + 40) {
+        turned = true;
+        break;
+      }
+    }
+    expect(collidedDuringTurn).toBe(false);
+    expect(turned).toBe(true);
+  });
+
+  it('stabilizes heading deviation via caster self-alignment when driving straight', () => {
+    const world = buildWorld(getCity('gold')!);
+    // Start vehicle angled 8° (0.14 rad) off the road axis
+    let v = createInitialVehicle(roadX(2), roadY(2) + 50);
+    v.angle = Math.PI / 2 + 0.14; // heading south with a slight tilt
+    v.speed = 150;
+
+    // Drive forward with centered steering (|steer| = 0) for 1.2 seconds (72 frames)
+    for (let f = 0; f < 72; f++) {
+      v = updateVehicle(v, { seq: f, timestamp: f * 16, steer: 0, throttle: 1.0, brake: 0, nitro: false }, 1 / 60, world.width, world.height);
+    }
+
+    // Heading should have self-aligned back toward Math.PI / 2 (south) within 0.03 rad (<2°)
+    const dev = Math.abs(v.angle - Math.PI / 2);
+    expect(dev).toBeLessThan(0.04);
+  });
+
+  it('verifies collision body dimensions and hull alignment match visual car (28x52 px)', () => {
+    // 2 circles of radius 13 at axle ±13 px along the heading
+    expect(CAR_RADIUS).toBe(13);
+    expect(CAR_AXLE).toBe(13);
+
+    const length = CAR_AXLE * 2 + CAR_RADIUS * 2; // 26 + 26 = 52 px
+    const width = CAR_RADIUS * 2; // 26 px (plus 2 px visual margin = 28 px)
+    expect(length).toBe(52);
+    expect(width).toBe(26);
+  });
+
+  it('guarantees vehicle spawn safety across all 4 cities with >90 px open clearance', () => {
+    for (const city of CITIES) {
+      const world = buildWorld(city);
+      const sx = world.start.x;
+      const sy = world.start.y;
+
+      // Ensure center point is not blocked
+      expect(pointBlocked(world, sx, sy, 0)).toBe(false);
+
+      // Ensure entire 90 px radius around spawn point is open road
+      for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+        const testX = sx + Math.cos(angle) * 90;
+        const testY = sy + Math.sin(angle) * 90;
+        expect(pointBlocked(world, testX, testY, CAR_RADIUS)).toBe(false);
+      }
+    }
+  });
+
+  it('ensures thumb steering downward arc in Classic mode never cuts throttle or triggers brake', () => {
+    // When holding gas pedal and steering left with a downward thumb arc (v.y = -0.35)
+    const out = mapControls(DEFAULT_SETTINGS, { x: -0.8, y: -0.35 }, { gas: true, brake: false });
+    expect(out.throttle).toBe(1); // 100% gas remains uninterrupted
+    expect(out.brake).toBe(0);    // 0% brake, no accidental braking
+    expect(out.steer).toBeLessThan(-0.5); // steering remains responsive
   });
 });

@@ -314,7 +314,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
           const tr = actors ? collideTraffic(actors, res.vehicle) : { vehicle: res.vehicle, impact: 0, hit: null };
           vehicleRef.current = tr.vehicle;
           for (const hit of [res, tr]) {
-            const dmg = damageFrom(hit.impact, hit.hit);
+            const dmg = damageFrom(hit.impact, hit.hit, w.city.id);
             if (dmg > 0 && now - lastDamageTimeRef.current >= 250) {
               lastDamageTimeRef.current = now;
               crashDamage += dmg;
