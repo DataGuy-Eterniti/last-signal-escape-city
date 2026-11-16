@@ -8,6 +8,7 @@ import { buildWorld, collide, damageFrom, districtAt, METERS_PER_PX, World } fro
 import { CityProfile, getCity } from '../engine/cities';
 import { Actors, collideTraffic, createActors, updateActors } from '../engine/actors';
 import { GameHostNetwork } from '../network/webrtc';
+import { InputReceiver } from '../network/inputReceiver';
 import { generateRoomCode } from '../utils/room';
 import { Letters, SpeedArc } from '../components/Ornaments';
 import { CitySelect, fmtTime, readBest, writeBest } from '../components/CitySelect';
@@ -126,6 +127,8 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
   const activeInputRef = useRef<ControllerInput>({ steer: 0, throttle: 0, brake: 0, nitro: false, seq: 0, timestamp: Date.now() });
   const keysDownRef = useRef<{ [key: string]: boolean }>({});
   const lastPacketTimeRef = useRef<number>(0);
+  // latest-input-wins: drops stale / out-of-order phone packets, falls back to neutral after 250 ms
+  const receiverRef = useRef(new InputReceiver());
   const wasConnectedRef = useRef<boolean>(false);
   const districtRef = useRef('');
   const actorsRef = useRef<Actors | null>(null);
@@ -198,18 +201,24 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
   useEffect(() => {
     const handleNetworkMessage = (packet: NetworkPacket) => {
       if ('steer' in packet) {
-        lastPacketTimeRef.current = Date.now();
-        activeInputRef.current = packet;
+        if (receiverRef.current.receive(packet)) {
+          lastPacketTimeRef.current = Date.now();
+          activeInputRef.current = receiverRef.current.getActiveInput();
+        }
       }
     };
     const host = new GameHostNetwork(roomCode, handleNetworkMessage, (state) => {
       setNetworkState(state);
       if (state.status === 'connected') {
         setShowPairingModal(false);
-        if (!wasConnectedRef.current) setToast('Phone connected');
+        if (!wasConnectedRef.current) {
+          receiverRef.current.reset(); // a reloaded phone restarts its sequence at 1
+          setToast('Phone connected');
+        }
         wasConnectedRef.current = true;
       } else if (wasConnectedRef.current && state.status !== 'reconnecting') {
         wasConnectedRef.current = false;
+        receiverRef.current.reset();
         setToast('Phone disconnected — keyboard active');
       }
     });
@@ -270,14 +279,14 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
       const kbdBrake = keys['ArrowDown'] || keys['KeyS'] ? 1 : 0;
       const kbdNitro = Boolean(keys['ShiftLeft'] || keys['ShiftRight'] || keys['Space']);
       const hasKbdInput = kbdSteer !== 0 || kbdThrottle !== 0 || kbdBrake !== 0 || kbdNitro;
-      const phoneInputRecent = Date.now() - lastPacketTimeRef.current < 250;
+      const phoneInputRecent = receiverRef.current.isRecent(Date.now(), 250);
 
       let input: ControllerInput;
       if (hasKbdInput || !phoneInputRecent) {
         input = { steer: kbdSteer, throttle: kbdThrottle, brake: kbdBrake, nitro: kbdNitro, seq: 0, timestamp: Date.now() };
         inputSourceRef.current = 'keyboard';
       } else {
-        input = activeInputRef.current;
+        input = receiverRef.current.getActiveInput(Date.now(), 250);
         inputSourceRef.current = 'phone';
       }
 
