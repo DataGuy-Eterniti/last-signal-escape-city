@@ -138,6 +138,42 @@ export function routePath(world: World, from: J): J[] | null {
   return null;
 }
 
+/** The junction in front of the car on its current road (heading snapped to the grid). */
+export function junctionAhead(world: World, x: number, y: number, angle: number): { dir: J; ahead: J } {
+  const card = Math.round(angle / (Math.PI / 2));
+  const dir: J = [Math.round(Math.cos(card * (Math.PI / 2))), Math.round(Math.sin(card * (Math.PI / 2)))];
+  const fx = (x - OFFSET) / PITCH;
+  const fy = (y - OFFSET) / PITCH;
+  const jx = dir[0] > 0 ? Math.ceil(fx - 0.05) : dir[0] < 0 ? Math.floor(fx + 0.05) : Math.round(fx);
+  const jy = dir[1] > 0 ? Math.ceil(fy - 0.05) : dir[1] < 0 ? Math.floor(fy + 0.05) : Math.round(fy);
+  return { dir, ahead: [clampIdx(jx, world.city.blocksX), clampIdx(jy, world.city.blocksY)] };
+}
+
+/** Route polyline in world px for the renderer's guidance ribbon: car → junctions → extraction. */
+export function routePolyline(world: World, x: number, y: number, angle: number): { x: number; y: number }[] {
+  const { dir, ahead } = junctionAhead(world, x, y, angle);
+  // candidates: the junction ahead, and the one behind (a U-turn) — draw whichever is shorter,
+  // so the ribbon never runs forward and then doubles back on itself
+  const behind = junctionAhead(world, x, y, angle + Math.PI).ahead;
+  let best: { x: number; y: number }[] = [];
+  let bestLen = Infinity;
+  for (const j of [ahead, behind]) {
+    const path = routePath(world, j);
+    if (!path) continue;
+    // first leg runs along the current road's centre line (never diagonally through a block)
+    const start = dir[0] !== 0 ? { x, y: roadY(j[1]) } : { x: roadX(j[0]), y };
+    const pts = [start, ...path.map(([i, k]) => ({ x: roadX(i), y: roadY(k) }))];
+    pts.push({ x: world.extraction.x, y: world.extraction.y });
+    let len = 0;
+    for (let k = 1; k < pts.length; k++) len += Math.abs(pts[k].x - pts[k - 1].x) + Math.abs(pts[k].y - pts[k - 1].y);
+    if (len < bestLen - 1) {
+      best = pts;
+      bestLen = len;
+    }
+  }
+  return best;
+}
+
 /**
  * Next manoeuvre for a car at (x, y) heading `angle`: picks the junction ahead
  * on the current road, routes from there, and expresses the first change of
@@ -148,16 +184,8 @@ export function nextTurn(world: World, x: number, y: number, angle: number): Rou
   const toGoal = Math.hypot(ex.x - x, ex.y - y);
   if (toGoal < 140) return { turn: 'arrive', street: ex.name, distM: toGoal * METERS_PER_PX };
 
-  // snap to a cardinal heading and find the junction ahead on this road
-  const card = Math.round(angle / (Math.PI / 2));
-  const dir: J = [Math.round(Math.cos(card * (Math.PI / 2))), Math.round(Math.sin(card * (Math.PI / 2)))];
-  const fx = (x - OFFSET) / PITCH;
-  const fy = (y - OFFSET) / PITCH;
-  let jx = dir[0] > 0 ? Math.ceil(fx - 0.05) : dir[0] < 0 ? Math.floor(fx + 0.05) : Math.round(fx);
-  let jy = dir[1] > 0 ? Math.ceil(fy - 0.05) : dir[1] < 0 ? Math.floor(fy + 0.05) : Math.round(fy);
-  jx = clampIdx(jx, world.city.blocksX);
-  jy = clampIdx(jy, world.city.blocksY);
-  const ahead: J = [jx, jy];
+  const { dir, ahead } = junctionAhead(world, x, y, angle);
+  const [jx, jy] = ahead;
   const path = routePath(world, ahead);
   const distAhead = Math.hypot(roadX(jx) - x, roadY(jy) - y);
   if (!path) return null;

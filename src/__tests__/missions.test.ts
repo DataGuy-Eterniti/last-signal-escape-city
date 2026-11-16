@@ -100,3 +100,37 @@ describe('missions', () => {
     expect(MISSIONS.find((m) => m.id === 'zombie')!.available).toBe(false);
   });
 });
+
+describe('route ribbon', () => {
+  it('is axis-aligned from the first point and ends at the extraction', async () => {
+    const { routePolyline } = await import('../ui/hudModel');
+    for (const c of CITIES) {
+      const w = buildWorld(c);
+      // car slightly off the centre line, angled 20° off its road
+      const pts = routePolyline(w, w.start.x + 30, w.start.y + 60, w.start.angle + 0.35);
+      expect(pts.length).toBeGreaterThan(1);
+      for (let k = 1; k < pts.length - 1; k++) {
+        const a = pts[k - 1];
+        const b = pts[k];
+        expect(Math.abs(a.x - b.x) < 1e-6 || Math.abs(a.y - b.y) < 1e-6).toBe(true);
+      }
+      expect(pts[pts.length - 1]).toEqual({ x: w.extraction.x, y: w.extraction.y });
+    }
+  });
+});
+
+describe('route ribbon direction', () => {
+  it('never doubles back on its own first leg', async () => {
+    const { routePolyline } = await import('../ui/hudModel');
+    for (const c of CITIES) {
+      const w = buildWorld(c);
+      for (const ang of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+        const pts = routePolyline(w, w.start.x + 120 * Math.cos(ang), w.start.y + 120 * Math.sin(ang), ang);
+        if (pts.length < 3) continue;
+        const d1 = [Math.sign(pts[1].x - pts[0].x), Math.sign(pts[1].y - pts[0].y)];
+        const d2 = [Math.sign(pts[2].x - pts[1].x), Math.sign(pts[2].y - pts[1].y)];
+        expect(d1[0] === -d2[0] && d1[1] === -d2[1] && (d1[0] !== 0 || d1[1] !== 0)).toBe(false);
+      }
+    }
+  });
+});

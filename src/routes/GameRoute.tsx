@@ -19,7 +19,8 @@ import { Meter } from '../components/hud/HudKit';
 import { IconCargo, IconWrench } from '../components/hud/Icons';
 import { MissionResult, Outcome, ResultStat } from '../components/hud/MissionResult';
 import { Mission, getMission } from '../ui/missions';
-import { CrimeHudState, HeatEvent, PURSUIT_AT, dangerMarkers, nextTurn } from '../ui/hudModel';
+import { CrimeHudState, HeatEvent, PURSUIT_AT, dangerMarkers, nextTurn, routePolyline } from '../ui/hudModel';
+import { Camera, createCamera, updateCamera } from '../engine/camera';
 import { CrimeRun, createCrimeRun, crimeStep } from '../ui/crimeDirector';
 import { HEAT_LABELS } from '../components/hud/CrimeHud';
 
@@ -132,6 +133,9 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
   const wasConnectedRef = useRef<boolean>(false);
   const districtRef = useRef('');
   const actorsRef = useRef<Actors | null>(null);
+  const cameraRef = useRef<Camera | null>(null);
+  const routeRef = useRef<{ x: number; y: number }[]>([]);
+  const guidanceRef = useRef(true); // G toggles the route ribbon
   const lastFireToastRef = useRef(0);
 
   // Adaptive resolution (keeps 60 FPS on integrated GPUs)
@@ -147,6 +151,8 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
     shakeRef.current = 0;
     districtRef.current = '';
     actorsRef.current = createActors(w);
+    cameraRef.current = createCamera(v);
+    routeRef.current = routePolyline(w, v.x, v.y, v.angle);
     crimeRef.current = missionRef.current?.id === 'crime' ? createCrimeRun(actorsRef.current, w) : null;
     setCrimeHud(null);
     setResult(null);
@@ -237,6 +243,10 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
     const down = (e: KeyboardEvent) => {
       keysDownRef.current[e.code] = true;
       if (e.code === 'KeyP') setShowPairingModal((p) => !p);
+      if (e.code === 'KeyG') {
+        guidanceRef.current = !guidanceRef.current;
+        setToast(guidanceRef.current ? 'Route guidance on' : 'Route guidance off');
+      }
       if (e.code === 'Escape') setShowPairingModal(false);
       if (e.code === 'KeyR' && (phaseRef.current === 'play' || phaseRef.current === 'won' || phaseRef.current === 'lost') && worldRef.current) {
         resetRun(worldRef.current);
@@ -386,11 +396,14 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
       shakeRef.current *= 0.88;
       const sh = shakeRef.current;
       ctx.setTransform(scaleRef.current, 0, 0, scaleRef.current, 0, 0);
+      const cam = (cameraRef.current = updateCamera(cameraRef.current ?? createCamera(vehicleRef.current), vehicleRef.current, Math.min(dt, 0.05), cssW, cssH));
       renderGame(ctx, cssW, cssH, vehicleRef.current, w, {
         time: (now - t0) / 1000,
         shakeX: sh > 0.3 ? (Math.random() - 0.5) * sh : 0,
         shakeY: sh > 0.3 ? (Math.random() - 0.5) * sh : 0,
-        actors: actorsRef.current ?? undefined
+        actors: actorsRef.current ?? undefined,
+        camera: cam,
+        route: guidanceRef.current && phaseRef.current === 'play' ? routeRef.current : undefined
       });
     };
     animId = requestAnimationFrame(loop);
@@ -406,6 +419,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
       const dx = w.extraction.x - v.x;
       const dy = w.extraction.y - v.y;
       const district = districtAt(w, v.x, v.y);
+      routeRef.current = routePolyline(w, v.x, v.y, v.angle);
       if (phaseRef.current === 'play' && district !== districtRef.current) {
         if (districtRef.current) setToast(district);
         districtRef.current = district;
@@ -589,7 +603,7 @@ export const GameRoute: React.FC<{ onExit?: () => void }> = ({ onExit }) => {
                 </div>
               )}
               <div className="kicker" style={{ fontSize: 8, color: 'var(--dim)' }}>
-                R restart · P pair
+                R restart · P pair · G route
               </div>
             </div>
           </div>

@@ -94,3 +94,9 @@ Verified: 56/56 tests, `tsc` clean, production build OK, 60 FPS in Courier and C
 ### Follow-up fix (after f9b262e)
 - `src/routes/GameRoute.tsx`: wires Antigravity's `InputReceiver` into the host. Phone packets are now accepted latest-input-wins, stale or out-of-order packets are dropped, and input falls back to neutral after 250 ms of silence. The receiver resets when a phone connects or disconnects, so a reloaded phone, whose sequence restarts at 1, is accepted. Antigravity's uncommitted `GameRoute.tsx` edits were overwritten when the Gold Noir 2.0 package was copied in; this restores the intent.
 - `src/__tests__/inputReceiver.test.ts`: removed an unused import that made `tsc` (and therefore `npm run build` / Base44 deploy) fail.
+
+---
+
+# Road visibility review (branch `feature/road-visibility`)
+
+Visual, camera and route-guidance pass on top of Gold Noir 2.0. No world geometry, physics, collision or networking changes. Full handoff with screenshots: `docs/handoff/road-visibility/ROAD_VISIBILITY_HANDOFF.md`.
