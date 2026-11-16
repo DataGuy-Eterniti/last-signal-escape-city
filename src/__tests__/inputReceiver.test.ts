@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { InputReceiver, NEUTRAL_INPUT } from '../network/inputReceiver';
+import { InputReceiver } from '../network/inputReceiver';
 import { ControllerInput } from '../types';
 
 describe('InputReceiver', () => {
